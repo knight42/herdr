@@ -104,7 +104,7 @@ impl App {
                 );
             }
             match self.pane_selection_text(selection) {
-                Ok(text) => Some(text),
+                Ok((text, _)) => Some(text),
                 Err((code, message)) => {
                     return crate::app::api::responses::encode_error(id, code, message);
                 }
@@ -720,6 +720,7 @@ mod tests {
                     anchor: crate::api::schema::PaneTextPoint { row: 0, col: 0 },
                     cursor: crate::api::schema::PaneTextPoint { row: 0, col: 7 },
                     content_revision: Some(u64::MAX),
+                    unit: None,
                 }),
             },
         );

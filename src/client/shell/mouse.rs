@@ -1818,7 +1818,7 @@ impl ClientShellState {
                 }
                 self.stop_selection_autoscroll();
                 self.selection_highlight_clear_deadline = None;
-                self.pending_word_selection = None;
+                self.pending_click_selection = None;
                 let previous_pane_click = self.last_pane_click.take();
                 self.workspace_press = None;
                 self.tab_press = None;
@@ -2127,33 +2127,50 @@ impl ClientShellState {
                             last_event: mouse,
                         });
                     } else if super::contains(hit.inner_rect, point) {
+                        let now = std::time::Instant::now();
+                        let viewport_row = mouse.row.saturating_sub(hit.inner_rect.y);
+                        let col = mouse.column.saturating_sub(hit.inner_rect.x);
+                        // Modifier presses never chain into a multi-click gesture.
+                        let count = match previous_pane_click
+                            .as_ref()
+                            .filter(|_| mouse.modifiers.is_empty())
+                        {
+                            Some(previous) => {
+                                previous.next_count(&hit.pane_id, viewport_row, col, now)
+                            }
+                            None => 1,
+                        };
                         let click = ClientPaneClick {
                             pane_id: hit.pane_id.clone(),
-                            viewport_row: mouse.row.saturating_sub(hit.inner_rect.y),
-                            col: mouse.column.saturating_sub(hit.inner_rect.x),
-                            at: std::time::Instant::now(),
+                            viewport_row,
+                            col,
+                            at: now,
+                            count,
                         };
-                        if mouse.modifiers.is_empty()
-                            && previous_pane_click
-                                .as_ref()
-                                .is_some_and(|previous| previous.is_double_click_for(&click))
-                        {
-                            self.request_word_selection(
+                        if mouse.modifiers.is_empty() {
+                            self.last_pane_click = Some(click);
+                        }
+                        match count {
+                            2 => self.request_click_selection(
                                 &hit,
-                                click.viewport_row,
-                                click.col,
+                                viewport_row,
+                                ClientClickSelectionKind::Word { col },
                                 outcome,
-                            );
-                        } else {
-                            if mouse.modifiers.is_empty() {
-                                self.last_pane_click = Some(click);
+                            ),
+                            3 => self.request_click_selection(
+                                &hit,
+                                viewport_row,
+                                ClientClickSelectionKind::Line,
+                                outcome,
+                            ),
+                            _ => {
+                                self.selection = Some(crate::selection::Selection::anchor(
+                                    hit.pane_id.clone(),
+                                    viewport_row,
+                                    col,
+                                    hit.scroll,
+                                ));
                             }
-                            self.selection = Some(crate::selection::Selection::anchor(
-                                hit.pane_id.clone(),
-                                mouse.row.saturating_sub(hit.inner_rect.y),
-                                mouse.column.saturating_sub(hit.inner_rect.x),
-                                hit.scroll,
-                            ));
                         }
                     }
                     self.push_endpoint_method(

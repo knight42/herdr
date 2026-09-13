@@ -123,6 +123,7 @@ fn client_mouse_selection_highlights_and_copies_through_endpoint_extraction() {
         Ok(crate::api::schema::ResponseResult::PaneSelection {
             pane_id: "pane_1".into(),
             text: "LIV".into(),
+            range: None,
         }),
     );
     assert!(repaint);
@@ -261,6 +262,7 @@ fn retained_mouse_selection_survives_output_and_copies_without_terminal_input() 
         Ok(crate::api::schema::ResponseResult::PaneSelection {
             pane_id: "pane_1".into(),
             text: "yIV".into(),
+            range: None,
         }),
     );
     assert!(matches!(&actions[..], [ClientShellAction::ClipboardWrite(bytes)] if bytes == b"yIV"));
@@ -1215,7 +1217,12 @@ fn word_selection_result_survives_focus_snapshot_lag() {
     state.compose(106, 20).expect("composed frame");
     let hit = state.hits.panes[0].clone();
     let mut request = ClientShellInput::default();
-    state.request_word_selection(&hit, 0, 1, &mut request);
+    state.request_click_selection(
+        &hit,
+        0,
+        ClientClickSelectionKind::Word { col: 1 },
+        &mut request,
+    );
     let request_id = match &request.actions[0] {
         ClientShellAction::Endpoint { request, .. } => request.id.clone(),
         _ => unreachable!(),
@@ -1230,6 +1237,7 @@ fn word_selection_result_survives_focus_snapshot_lag() {
         Ok(crate::api::schema::ResponseResult::PaneSelection {
             pane_id: "pane_1".into(),
             text: "hello world".into(),
+            range: None,
         }),
     );
     assert!(repaint);

@@ -285,6 +285,7 @@ fn client_double_click_selects_and_copies_endpoint_row_word() {
         Ok(crate::api::schema::ResponseResult::PaneSelection {
             pane_id: "pane_1".into(),
             text: "LIVE".into(),
+            range: None,
         }),
     );
     assert!(repaint);
@@ -307,11 +308,118 @@ fn client_double_click_selects_and_copies_endpoint_row_word() {
         Ok(crate::api::schema::ResponseResult::PaneSelection {
             pane_id: "pane_1".into(),
             text: "LIVE".into(),
+            range: None,
         }),
     );
     assert!(matches!(
         &actions[..],
         [ClientShellAction::ClipboardWrite(bytes)] if bytes == b"LIVE"
+    ));
+}
+
+#[test]
+fn client_triple_click_selects_and_copies_the_full_logical_line() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    let click = || {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: pane.inner_rect.x + 1,
+            row: pane.inner_rect.y,
+            modifiers: KeyModifiers::empty(),
+        })
+    };
+    let release = || {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: pane.inner_rect.x + 1,
+            row: pane.inner_rect.y,
+            modifiers: KeyModifiers::empty(),
+        })
+    };
+
+    // Three clicks in the same cell: anchor, word, then the logical line.
+    state.handle_raw_events(vec![click()]);
+    state.handle_raw_events(vec![release()]);
+    let second = state.handle_raw_events(vec![click()]);
+    assert!(
+        second.actions.iter().any(|action| matches!(
+            action,
+            ClientShellAction::Endpoint { request, .. }
+                if matches!(request.method, crate::api::schema::Method::PaneSelectionRead(_))
+        )),
+        "second click resolves the word"
+    );
+    state.handle_raw_events(vec![release()]);
+    let third = state.handle_raw_events(vec![click()]);
+    let ClientShellAction::Endpoint { request, .. } = third
+        .actions
+        .iter()
+        .find(|action| {
+            matches!(
+                action,
+                ClientShellAction::Endpoint { request, .. }
+                    if matches!(request.method, crate::api::schema::Method::PaneSelectionRead(_))
+            )
+        })
+        .expect("third click reads the logical row")
+    else {
+        unreachable!()
+    };
+    let line_request_id = request.id.clone();
+    // A line gesture reads the clicked row with `unit = line`, so the endpoint
+    // resolves the soft-wrapped rows the logical line continues across.
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::PaneSelectionRead(params)
+            if params.anchor == crate::api::schema::PaneTextPoint { row: 0, col: 0 }
+                && params.cursor == crate::api::schema::PaneTextPoint { row: 0, col: 3 }
+                && params.unit == Some(crate::api::schema::PaneSelectionUnit::Line)
+    ));
+
+    // The endpoint returns the logical line and the row span it resolved.
+    let (repaint, actions) = state.handle_endpoint_result(
+        "boot-1",
+        &line_request_id,
+        Ok(crate::api::schema::ResponseResult::PaneSelection {
+            pane_id: "pane_1".into(),
+            text: "SOFT WRAP LINE".into(),
+            range: Some(crate::api::schema::PaneTextRange {
+                start: crate::api::schema::PaneTextPoint { row: 0, col: 0 },
+                end: crate::api::schema::PaneTextPoint { row: 1, col: 8 },
+            }),
+        }),
+    );
+    assert!(repaint);
+    let selection = state.selection.as_ref().expect("visible line selection");
+    assert!(selection.is_finalized());
+    assert_eq!(selection.ordered_cells(), ((0, 0), (1, 8)));
+    let [ClientShellAction::Endpoint { request, .. }] = &actions[..] else {
+        panic!("auto-copy should read the selected line");
+    };
+    let copy_request_id = request.id.clone();
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::PaneSelectionRead(params)
+            if params.anchor == crate::api::schema::PaneTextPoint { row: 0, col: 0 }
+                && params.cursor == crate::api::schema::PaneTextPoint { row: 1, col: 8 }
+                && params.unit.is_none()
+    ));
+    let (_, actions) = state.handle_endpoint_result(
+        "boot-1",
+        &copy_request_id,
+        Ok(crate::api::schema::ResponseResult::PaneSelection {
+            pane_id: "pane_1".into(),
+            text: "SOFT WRAP LINE".into(),
+            range: None,
+        }),
+    );
+    assert!(matches!(
+        &actions[..],
+        [ClientShellAction::ClipboardWrite(bytes)] if bytes == b"SOFT WRAP LINE"
     ));
 }
 

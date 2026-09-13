@@ -165,6 +165,9 @@ pub enum ResponseResult {
     PaneSelection {
         pane_id: String,
         text: String,
+        /// Resolved range when the read asked for a logical line.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        range: Option<PaneTextRange>,
     },
     PaneCopyMotion {
         pane_id: String,

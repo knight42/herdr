@@ -254,6 +254,17 @@ pub struct PaneTextPoint {
     pub col: u16,
 }
 
+/// Unit a client-owned selection read resolves its anchor to.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(rename_all = "snake_case")]
+pub enum PaneSelectionUnit {
+    /// Exactly the requested cell range.
+    Cell,
+    /// The full logical line containing the anchor row, including the
+    /// soft-wrapped rows that line continues across.
+    Line,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct PaneSelectionReadParams {
     pub pane_id: String,
@@ -261,6 +272,10 @@ pub struct PaneSelectionReadParams {
     pub cursor: PaneTextPoint,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub content_revision: Option<u64>,
+    /// Defaults to `cell`. `line` expands the anchor row to its logical line and
+    /// reports the resolved range back in the response.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub unit: Option<PaneSelectionUnit>,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]

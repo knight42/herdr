@@ -3228,6 +3228,17 @@
             },
             "pane_id": {
               "type": "string"
+            },
+            "unit": {
+              "anyOf": [
+                {
+                  "$ref": "#/schemas/request/$defs/PaneSelectionUnit"
+                },
+                {
+                  "type": "null"
+                }
+              ],
+              "description": "Defaults to `cell`. `line` expands the anchor row to its logical line and\nreports the resolved range back in the response."
             }
           },
           "required": [
@@ -3236,6 +3247,21 @@
             "cursor"
           ],
           "type": "object"
+        },
+        "PaneSelectionUnit": {
+          "description": "Unit a client-owned selection read resolves its anchor to.",
+          "oneOf": [
+            {
+              "const": "cell",
+              "description": "Exactly the requested cell range.",
+              "type": "string"
+            },
+            {
+              "const": "line",
+              "description": "The full logical line containing the anchor row, including the\nsoft-wrapped rows that line continues across.",
+              "type": "string"
+            }
+          ]
         },
         "PaneSendInputParams": {
           "properties": {
@@ -9824,6 +9850,17 @@
               "properties": {
                 "pane_id": {
                   "type": "string"
+                },
+                "range": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/schemas/success_response/$defs/PaneTextRange"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Resolved range when the read asked for a logical line."
                 },
                 "text": {
                   "type": "string"

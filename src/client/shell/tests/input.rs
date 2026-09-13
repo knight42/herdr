@@ -398,6 +398,7 @@ fn highlighted_search_match_copies_after_in_flight_repeat() {
         Ok(crate::api::schema::ResponseResult::PaneSelection {
             pane_id: "pane_1".into(),
             text: "needle".into(),
+            range: None,
         }),
     );
     assert!(matches!(

@@ -380,6 +380,7 @@ mod tests {
             result: ResponseResult::PaneSelection {
                 pane_id: "w1:p1".into(),
                 text: selection.clone(),
+                range: None,
             },
         })
         .unwrap();

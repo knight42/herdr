@@ -253,8 +253,8 @@ const DEFAULT_CONFIG: &str = r##"# herdr configuration
 # mouse_capture = true
 
 # Automatically copy text selected with the mouse.
-# Set false to retain drag or double-click word selection until Ctrl+C,
-# or Cmd+C when the host forwards it, copies and clears it.
+# Set false to retain drag, double-click word, or triple-click line selection
+# until Ctrl+C, or Cmd+C when the host forwards it, copies and clears it.
 # copy_on_select = true
 
 # Host cursor policy: "auto", "native", or "drawn".

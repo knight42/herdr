@@ -435,6 +435,7 @@ fn plugin_command_carries_client_owned_selection_coordinates() {
             anchor: crate::api::schema::PaneTextPoint { row: 2, col: 3 },
             cursor: crate::api::schema::PaneTextPoint { row: 4, col: 5 },
             content_revision: Some(42),
+            unit: None,
         })
     );
 }

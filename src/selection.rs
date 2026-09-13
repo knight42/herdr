@@ -7,7 +7,8 @@
 //!   MouseUp           → Selection finalized; optionally copied by the caller
 //!   Next click / key  → A retained selection is cleared
 //!
-//! Double-click selects a word; the caller decides whether to copy it immediately.
+//! Double-click selects a word and triple-click selects a logical line; the
+//! caller decides whether to copy immediately.
 //!
 //! Rows are stored in screen-buffer coordinates instead of viewport-relative
 //! coordinates. That keeps selection stable while the pane scrolls.
@@ -224,6 +225,28 @@ pub(crate) fn absolute_row_for_viewport(viewport_row: u16, metrics: Option<Scrol
     absolute_row_for_viewport_row(viewport_row, metrics)
 }
 
+/// Row bounds of the logical line containing `index`, within a window of
+/// consecutive screen rows. A row that continues the previous one (soft wrap)
+/// extends the line upwards; a row that wraps into the next one extends it
+/// downwards. Returns `None` when `index` is outside the window.
+pub(crate) fn logical_line_bounds(
+    rows: &[crate::ghostty::ScreenTextRow],
+    index: usize,
+) -> Option<(usize, usize)> {
+    if index >= rows.len() {
+        return None;
+    }
+    let mut first = index;
+    while first > 0 && rows[first].wrap_continuation {
+        first -= 1;
+    }
+    let mut last = index;
+    while rows[last].soft_wrapped && last + 1 < rows.len() {
+        last += 1;
+    }
+    Some((first, last))
+}
+
 fn absolute_row_for_viewport_row(viewport_row: u16, metrics: Option<ScrollMetrics>) -> u32 {
     viewport_top_row(metrics) + u32::from(viewport_row)
 }
@@ -426,6 +449,47 @@ mod tests {
     fn ordering_forward() {
         let sel = make_sel(2, 5, 4, 10);
         assert_eq!(sel.ordered(), ((2, 5), (4, 10)));
+    }
+
+    fn text_row(soft_wrapped: bool, wrap_continuation: bool) -> crate::ghostty::ScreenTextRow {
+        crate::ghostty::ScreenTextRow {
+            cells: Vec::new(),
+            soft_wrapped,
+            wrap_continuation,
+        }
+    }
+
+    #[test]
+    fn logical_line_bounds_follow_soft_wrap_flags() {
+        // Rows 0 and 1 are one wrapped line; row 2 is its own line.
+        let rows = [
+            text_row(true, false),
+            text_row(false, true),
+            text_row(false, false),
+        ];
+        assert_eq!(logical_line_bounds(&rows, 0), Some((0, 1)));
+        assert_eq!(logical_line_bounds(&rows, 1), Some((0, 1)));
+        assert_eq!(logical_line_bounds(&rows, 2), Some((2, 2)));
+        assert_eq!(logical_line_bounds(&rows, 3), None);
+    }
+
+    #[test]
+    fn logical_line_bounds_expand_both_ways_from_a_middle_row() {
+        // A three-row line; clicking its middle row must reach both ends.
+        let rows = [
+            text_row(true, false),
+            text_row(true, true),
+            text_row(false, true),
+        ];
+        assert_eq!(logical_line_bounds(&rows, 1), Some((0, 2)));
+    }
+
+    #[test]
+    fn logical_line_bounds_clamp_to_the_scanned_window() {
+        // The window ends before the line does: report what was seen rather
+        // than scanning without bound.
+        let rows = [text_row(true, false)];
+        assert_eq!(logical_line_bounds(&rows, 0), Some((0, 0)));
     }
 
     #[test]

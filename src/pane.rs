@@ -3190,6 +3190,18 @@ impl PaneRuntime {
         result
     }
 
+    pub(crate) fn screen_text_rows_range(
+        &self,
+        start_row: usize,
+        end_row_exclusive: usize,
+    ) -> Option<(u16, Vec<crate::ghostty::ScreenTextRow>)> {
+        let result = self
+            .terminal
+            .screen_text_rows_range(start_row, end_row_exclusive);
+        self.compression.wake();
+        result
+    }
+
     pub fn encode_mouse_button(
         &self,
         kind: crossterm::event::MouseEventKind,

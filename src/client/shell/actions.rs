@@ -217,6 +217,7 @@ impl ClientShellState {
                                 col: cursor.1,
                             },
                             content_revision: Some(content_revision),
+                            unit: None,
                         })
                     })
                     .flatten();
@@ -274,6 +275,7 @@ impl ClientShellState {
                         col: cursor.1,
                     },
                     content_revision,
+                    unit: None,
                 },
             ),
             PendingEndpointKind::SelectionCopy,
@@ -281,11 +283,14 @@ impl ClientShellState {
         );
     }
 
-    pub(super) fn request_word_selection(
+    /// Reads the logical row under a multi-click gesture so `kind` can be
+    /// resolved against it. A line read asks the endpoint for the whole logical
+    /// line, so soft-wrapped rows are resolved server-side.
+    pub(super) fn request_click_selection(
         &mut self,
         hit: &PaneHit,
         viewport_row: u16,
-        col: u16,
+        kind: ClientClickSelectionKind,
         outcome: &mut ClientShellInput,
     ) {
         let absolute_row = crate::selection::absolute_row_for_viewport(viewport_row, hit.scroll);
@@ -299,9 +304,9 @@ impl ClientShellState {
                     .find(|pane| pane.pane_id == hit.pane_id)
             })
             .map(|pane| pane.content_revision);
-        self.word_selection_generation = self.word_selection_generation.saturating_add(1);
-        let generation = self.word_selection_generation;
-        self.pending_word_selection = Some(generation);
+        self.click_selection_generation = self.click_selection_generation.saturating_add(1);
+        let generation = self.click_selection_generation;
+        self.pending_click_selection = Some(generation);
         if !self.push_endpoint_method_with_kind(
             crate::api::schema::Method::PaneSelectionRead(
                 crate::api::schema::PaneSelectionReadParams {
@@ -315,18 +320,46 @@ impl ClientShellState {
                         col: hit.inner_rect.width.saturating_sub(1),
                     },
                     content_revision,
+                    unit: match kind {
+                        ClientClickSelectionKind::Word { .. } => None,
+                        ClientClickSelectionKind::Line => {
+                            Some(crate::api::schema::PaneSelectionUnit::Line)
+                        }
+                    },
                 },
             ),
-            PendingEndpointKind::WordSelection {
+            PendingEndpointKind::ClickSelection {
                 pane_id: hit.pane_id.clone(),
                 absolute_row,
-                col,
+                kind,
                 generation,
             },
             outcome,
         ) {
-            self.pending_word_selection = None;
+            self.pending_click_selection = None;
         }
+    }
+
+    /// Installs the selection a multi-click gesture resolved and, when
+    /// `copy_on_select` is set, copies it with the standard selection highlight.
+    fn apply_click_selection(
+        &mut self,
+        mut selection: crate::selection::Selection<String>,
+    ) -> (bool, Vec<ClientShellAction>) {
+        if !selection.finish() {
+            return (false, Vec::new());
+        }
+        self.selection = Some(selection);
+        self.selection_autoscroll = None;
+        self.selection_autoscroll_deadline = None;
+        if !self.config.copy_on_select {
+            return (true, Vec::new());
+        }
+        self.selection_highlight_clear_deadline =
+            Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+        let mut outcome = ClientShellInput::default();
+        self.request_selection_copy(&mut outcome, false);
+        (true, outcome.actions)
     }
 
     pub(super) fn push_endpoint_method(
@@ -650,61 +683,55 @@ impl ClientShellState {
                     Err(_) => (true, Vec::new()),
                 };
             }
-            PendingEndpointKind::WordSelection {
+            PendingEndpointKind::ClickSelection {
                 pane_id,
                 absolute_row,
-                col,
+                kind,
                 generation,
             } => {
-                if self.pending_word_selection != Some(generation)
+                if self.pending_click_selection != Some(generation)
                     || self.snapshot.as_deref().is_none_or(|snapshot| {
                         !snapshot.panes.iter().any(|pane| pane.pane_id == pane_id)
                     })
                 {
                     return (false, Vec::new());
                 }
-                self.pending_word_selection = None;
-                let row_text = match result {
+                self.pending_click_selection = None;
+                let (row_text, resolved) = match result {
                     Ok(crate::api::schema::ResponseResult::PaneSelection {
                         pane_id: returned_pane_id,
                         text,
-                    }) if returned_pane_id == pane_id => text,
+                        range,
+                    }) if returned_pane_id == pane_id => (text, range),
                     Ok(crate::api::schema::ResponseResult::PaneSelection { .. }) => {
                         return (false, Vec::new())
                     }
                     Ok(_) => {
-                        self.endpoint_error = Some(
-                            "endpoint returned an unexpected word-selection result".to_owned(),
-                        );
+                        self.endpoint_error =
+                            Some("endpoint returned an unexpected selection result".to_owned());
                         return (true, Vec::new());
                     }
                     Err(_) => return (true, Vec::new()),
                 };
-                let Some((start_col, end_col)) =
-                    crate::app::actions::word_bounds_at_column(&row_text, col)
-                else {
+                let cells = match kind {
+                    ClientClickSelectionKind::Word { col } => {
+                        crate::app::actions::word_bounds_at_column(&row_text, col)
+                            .map(|(start, end)| ((absolute_row, start), (absolute_row, end)))
+                    }
+                    ClientClickSelectionKind::Line => resolved.map(|range| {
+                        (
+                            (range.start.row, range.start.col),
+                            (range.end.row, range.end.col),
+                        )
+                    }),
+                };
+                let Some((anchor, cursor)) = cells else {
                     self.selection = None;
                     return (true, Vec::new());
                 };
-                let mut selection = crate::selection::Selection::absolute_range(
-                    pane_id,
-                    (absolute_row, start_col),
-                    (absolute_row, end_col),
-                );
-                if !selection.finish() {
-                    return (false, Vec::new());
-                }
-                self.selection = Some(selection);
-                self.selection_autoscroll = None;
-                self.selection_autoscroll_deadline = None;
-                if !self.config.copy_on_select {
-                    return (true, Vec::new());
-                }
-                self.selection_highlight_clear_deadline =
-                    Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
-                let mut outcome = ClientShellInput::default();
-                self.request_selection_copy(&mut outcome, false);
-                return (true, outcome.actions);
+                return self.apply_click_selection(crate::selection::Selection::absolute_range(
+                    pane_id, anchor, cursor,
+                ));
             }
             PendingEndpointKind::PaneLinkActivate {
                 pane_id,

@@ -693,10 +693,12 @@ pub(super) enum PendingEndpointKind {
         pane_id: String,
         serial: u64,
     },
-    WordSelection {
+    /// A multi-click gesture waiting for the endpoint to return the row text
+    /// that its granularity is resolved against.
+    ClickSelection {
         pane_id: String,
         absolute_row: u32,
-        col: u16,
+        kind: ClientClickSelectionKind,
         generation: u64,
     },
     PaneLinkActivate {
@@ -806,15 +808,45 @@ pub(super) struct ClientPaneClick {
     pub(super) viewport_row: u16,
     pub(super) col: u16,
     pub(super) at: std::time::Instant,
+    /// Consecutive clicks in this chain: 1 anchors, 2 selects a word, 3 selects
+    /// the logical line.
+    pub(super) count: u8,
 }
 
 impl ClientPaneClick {
-    pub(super) fn is_double_click_for(&self, next: &Self) -> bool {
-        self.pane_id == next.pane_id
-            && next.at.duration_since(self.at) <= std::time::Duration::from_millis(350)
-            && self.viewport_row.abs_diff(next.viewport_row) <= 1
-            && self.col.abs_diff(next.col) <= 1
+    /// Highest click count a chain escalates to. Further clicks keep the
+    /// triple-click gesture instead of stacking new behaviours.
+    const MAX_COUNT: u8 = 3;
+
+    /// Click count for a press at this cell: it continues the chain when the
+    /// pane matches, the cell is within one row/column, and the press lands
+    /// inside the multi-click window.
+    pub(super) fn next_count(
+        &self,
+        pane_id: &str,
+        viewport_row: u16,
+        col: u16,
+        now: std::time::Instant,
+    ) -> u8 {
+        let continues = self.pane_id == pane_id
+            && now.duration_since(self.at) <= std::time::Duration::from_millis(350)
+            && self.viewport_row.abs_diff(viewport_row) <= 1
+            && self.col.abs_diff(col) <= 1;
+        if continues {
+            self.count.saturating_add(1).min(Self::MAX_COUNT)
+        } else {
+            1
+        }
     }
+}
+
+/// Granularity a multi-click gesture asks the endpoint to resolve.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(super) enum ClientClickSelectionKind {
+    /// Double-click: the token under the clicked column.
+    Word { col: u16 },
+    /// Triple-click: the whole logical line, soft-wrapped rows included.
+    Line,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -937,8 +969,8 @@ pub(crate) struct ClientShellState {
     pub(super) selection_autoscroll: Option<ClientSelectionAutoscroll>,
     pub(super) selection_autoscroll_deadline: Option<std::time::Instant>,
     pub(super) selection_highlight_clear_deadline: Option<std::time::Instant>,
-    pub(super) pending_word_selection: Option<u64>,
-    pub(super) word_selection_generation: u64,
+    pub(super) pending_click_selection: Option<u64>,
+    pub(super) click_selection_generation: u64,
     pub(super) copy_mode: Option<ClientCopyModeState>,
     pub(super) copy_session_generation: u64,
     pub(super) copy_operation_in_flight: bool,
@@ -1080,8 +1112,8 @@ impl ClientShellState {
             selection_autoscroll: None,
             selection_autoscroll_deadline: None,
             selection_highlight_clear_deadline: None,
-            pending_word_selection: None,
-            word_selection_generation: 0,
+            pending_click_selection: None,
+            click_selection_generation: 0,
             copy_mode: None,
             copy_session_generation: 0,
             copy_operation_in_flight: false,
@@ -1232,7 +1264,7 @@ impl ClientShellState {
         self.selection_autoscroll = None;
         self.selection_autoscroll_deadline = None;
         self.selection_highlight_clear_deadline = None;
-        self.pending_word_selection = None;
+        self.pending_click_selection = None;
         self.copy_mode = None;
         if self.mode == ClientShellMode::Copy {
             self.mode = ClientShellMode::Terminal;
@@ -1381,7 +1413,7 @@ impl ClientShellState {
             self.selection_autoscroll = None;
             self.selection_autoscroll_deadline = None;
             self.selection_highlight_clear_deadline = None;
-            self.pending_word_selection = None;
+            self.pending_click_selection = None;
             self.last_pane_click = None;
         }
         if let Some(copy_pane_id) = self
@@ -1610,7 +1642,7 @@ impl ClientShellState {
             self.selection_autoscroll = None;
             self.selection_autoscroll_deadline = None;
             self.selection_highlight_clear_deadline = None;
-            self.pending_word_selection = None;
+            self.pending_click_selection = None;
             self.copy_mode = None;
             self.reset_copy_pipeline();
             self.chrome_drag = None;

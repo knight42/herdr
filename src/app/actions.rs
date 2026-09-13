@@ -1201,6 +1201,18 @@ pub(crate) fn word_bounds_at_column(row: &str, col: u16) -> Option<(u16, u16)> {
     Some(span.columns(&cells))
 }
 
+/// Finds the inclusive terminal display-column bounds of the whole logical row.
+///
+/// Used by the triple-click line gesture. The endpoint hands back the unwrapped,
+/// trailing-trimmed logical line, so its last non-blank cell ends the selection
+/// and every soft-wrapped row of that line is covered by the same range. Leading
+/// whitespace is preserved; a row with no text selects nothing.
+pub(crate) fn line_bounds_at_row(row: &str) -> Option<(u16, u16)> {
+    let cells = text_cells(row);
+    let last = cells.iter().rposition(|cell| !cell.ch.is_whitespace())?;
+    Some((0, cells[last].end_col))
+}
+
 pub(crate) fn url_at_column(row: &str, col: u16) -> Option<&str> {
     let cells = text_cells(row);
     let clicked_idx = cell_index_at_column(&cells, col)?;
@@ -2469,6 +2481,20 @@ mod tests {
         ] {
             assert_selects_nothing(row, click);
         }
+    }
+
+    #[test]
+    fn triple_click_line_bounds_cover_the_whole_logical_row() {
+        // The endpoint hands back the unwrapped, trailing-trimmed logical line,
+        // so the selection spans column 0 through the last non-blank cell.
+        assert_eq!(line_bounds_at_row("git rebase --onto main"), Some((0, 21)));
+        // Leading indentation stays part of the line.
+        assert_eq!(line_bounds_at_row("    cargo test"), Some((0, 13)));
+        // Wide characters occupy two display cells each.
+        assert_eq!(line_bounds_at_row("abc 日本語"), Some((0, 9)));
+        // Blank rows select nothing.
+        assert_eq!(line_bounds_at_row(""), None);
+        assert_eq!(line_bounds_at_row("   "), None);
     }
 
     #[test]

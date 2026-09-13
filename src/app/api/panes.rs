@@ -11,10 +11,10 @@ use crate::api::schema::{
     PaneProcessInfoProcess, PaneReadParams, PaneReadResult, PaneReleaseAgentParams,
     PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
     PaneReportMetadataParams, PaneResizeParams, PaneResizeReason, PaneResizeResult,
-    PaneScrollParams, PaneSelectionReadParams, PaneSendInputParams, PaneSendKeysParams,
-    PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneSwapReason, PaneSwapResult,
-    PaneTarget, PaneTextPoint, PaneTextRange, PaneZoomMode, PaneZoomParams, PaneZoomReason,
-    PaneZoomResult, ResponseResult,
+    PaneScrollParams, PaneSelectionReadParams, PaneSelectionUnit, PaneSendInputParams,
+    PaneSendKeysParams, PaneSendTextParams, PaneSplitParams, PaneSwapParams, PaneSwapReason,
+    PaneSwapResult, PaneTarget, PaneTextPoint, PaneTextRange, PaneZoomMode, PaneZoomParams,
+    PaneZoomReason, PaneZoomResult, ResponseResult,
 };
 use crate::app::actions::{PaneZoomCommand, PaneZoomNoopReason};
 use crate::app::App;
@@ -209,7 +209,7 @@ impl App {
     pub(crate) fn pane_selection_text(
         &self,
         params: &PaneSelectionReadParams,
-    ) -> Result<String, (&'static str, String)> {
+    ) -> Result<(String, Option<PaneTextRange>), (&'static str, String)> {
         let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
             return Err((
                 "pane_not_found",
@@ -232,21 +232,82 @@ impl App {
         {
             return Err(("stale_content", "pane content changed".to_owned()));
         }
-        let selection = crate::selection::Selection::absolute_range(
-            pane_id,
-            (params.anchor.row, params.anchor.col),
-            (params.cursor.row, params.cursor.col),
-        );
-        let Some(text) = runtime.extract_selection(&selection) else {
-            return Err((
-                "selection_unavailable",
-                "selection text is unavailable".to_owned(),
-            ));
+        let (text, range) = if params.unit == Some(PaneSelectionUnit::Line) {
+            let Some((text, range)) = Self::pane_logical_line(runtime, pane_id, params.anchor.row)
+            else {
+                return Err((
+                    "selection_unavailable",
+                    "selection text is unavailable".to_owned(),
+                ));
+            };
+            (text, Some(range))
+        } else {
+            let selection = crate::selection::Selection::absolute_range(
+                pane_id,
+                (params.anchor.row, params.anchor.col),
+                (params.cursor.row, params.cursor.col),
+            );
+            let Some(text) = runtime.extract_selection(&selection) else {
+                return Err((
+                    "selection_unavailable",
+                    "selection text is unavailable".to_owned(),
+                ));
+            };
+            (text, None)
         };
         if params.content_revision.is_some() && runtime.content_seq() != before {
             return Err(("stale_content", "pane content changed".to_owned()));
         }
-        Ok(text)
+        Ok((text, range))
+    }
+
+    /// Resolves the logical line under `anchor_row`, including the soft-wrapped
+    /// rows it continues across, with trailing whitespace trimmed. `anchor_row`
+    /// is an absolute screen row, so scrollback positions resolve too.
+    fn pane_logical_line(
+        runtime: &crate::terminal::TerminalRuntime,
+        pane_id: crate::layout::PaneId,
+        anchor_row: u32,
+    ) -> Option<(String, PaneTextRange)> {
+        /// Rows scanned in each direction while looking for the line bounds. A
+        /// logical line longer than this is clamped instead of scanned unbounded.
+        const SCAN_ROWS: u32 = 512;
+        let window_start = anchor_row.saturating_sub(SCAN_ROWS) as usize;
+        let window_end = (u64::from(anchor_row) + u64::from(SCAN_ROWS) + 1) as usize;
+        let (cols, rows) = runtime.screen_text_rows_range(window_start, window_end)?;
+        let index = usize::try_from(anchor_row)
+            .ok()?
+            .checked_sub(window_start)?;
+        let (first, last) = crate::selection::logical_line_bounds(&rows, index)?;
+        let first_row = u32::try_from(window_start + first).ok()?;
+        let last_row = u32::try_from(window_start + last).ok()?;
+        let end_col = cols.saturating_sub(1);
+        let text = runtime.extract_selection(&crate::selection::Selection::absolute_range(
+            pane_id,
+            (first_row, 0),
+            (last_row, end_col),
+        ))?;
+        let last_row_text =
+            runtime.extract_selection(&crate::selection::Selection::absolute_range(
+                pane_id,
+                (last_row, 0),
+                (last_row, end_col),
+            ))?;
+        let end_col =
+            crate::app::actions::line_bounds_at_row(&last_row_text).map_or(end_col, |(_, end)| end);
+        Some((
+            text,
+            PaneTextRange {
+                start: PaneTextPoint {
+                    row: first_row,
+                    col: 0,
+                },
+                end: PaneTextPoint {
+                    row: last_row,
+                    col: end_col,
+                },
+            },
+        ))
     }
 
     pub(super) fn handle_pane_selection_read(
@@ -255,11 +316,12 @@ impl App {
         params: PaneSelectionReadParams,
     ) -> String {
         match self.pane_selection_text(&params) {
-            Ok(text) => encode_success(
+            Ok((text, range)) => encode_success(
                 id,
                 ResponseResult::PaneSelection {
                     pane_id: params.pane_id,
                     text,
+                    range,
                 },
             ),
             Err((code, message)) => encode_error(id, code, message),
@@ -2431,6 +2493,7 @@ mod tests {
             anchor: crate::api::schema::PaneTextPoint { row: 0, col: 0 },
             cursor: crate::api::schema::PaneTextPoint { row: 0, col: 4 },
             content_revision: Some(revision),
+            unit: None,
         };
         assert_eq!(
             app.pane_selection_text(&params).unwrap_err().0,
@@ -2445,8 +2508,73 @@ mod tests {
             ResponseResult::PaneSelection {
                 pane_id: public_pane_id,
                 text: "hello".into(),
+                range: None,
             }
         );
+    }
+
+    #[tokio::test]
+    async fn api_line_selection_spans_soft_wraps_but_not_hard_breaks() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        // 8 columns: "alpha bravo charlie" wraps across three rows, then a hard
+        // break starts an unrelated line.
+        app.state.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+                8,
+                6,
+                1000,
+                b"alpha bravo charlie\r\ndelta",
+            ),
+        );
+        let line_at = |app: &App, row: u32| {
+            app.pane_selection_text(&PaneSelectionReadParams {
+                pane_id: public_pane_id.clone(),
+                anchor: PaneTextPoint { row, col: 2 },
+                cursor: PaneTextPoint { row, col: 7 },
+                content_revision: None,
+                unit: Some(PaneSelectionUnit::Line),
+            })
+            .expect("line selection")
+        };
+
+        // The wrapped line resolves to the same text and range from any of its rows.
+        let (text, range) = line_at(&app, 1);
+        assert_eq!(text, "alpha bravo charlie");
+        assert_eq!(
+            range,
+            Some(PaneTextRange {
+                start: PaneTextPoint { row: 0, col: 0 },
+                // "alpha br" + "avo char" + "lie": the line ends at column 2.
+                end: PaneTextPoint { row: 2, col: 2 },
+            })
+        );
+        assert_eq!(line_at(&app, 2).1, range);
+
+        // A hard break ends the line, so the next row resolves on its own.
+        let (text, range) = line_at(&app, 3);
+        assert_eq!(text, "delta");
+        assert_eq!(
+            range,
+            Some(PaneTextRange {
+                start: PaneTextPoint { row: 3, col: 0 },
+                end: PaneTextPoint { row: 3, col: 4 },
+            })
+        );
+
+        // Cell reads are unchanged: no range is reported.
+        let (text, range) = app
+            .pane_selection_text(&PaneSelectionReadParams {
+                pane_id: public_pane_id,
+                anchor: PaneTextPoint { row: 3, col: 0 },
+                cursor: PaneTextPoint { row: 3, col: 2 },
+                content_revision: None,
+                unit: None,
+            })
+            .expect("cell selection");
+        assert_eq!(text, "del");
+        assert_eq!(range, None);
     }
 
     #[tokio::test]

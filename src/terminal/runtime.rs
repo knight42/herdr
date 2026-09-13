@@ -486,6 +486,14 @@ impl TerminalRuntime {
         Some((screen, crate::terminal::ScreenSnapshot { cols, rows }))
     }
 
+    pub(crate) fn screen_text_rows_range(
+        &self,
+        start_row: usize,
+        end_row_exclusive: usize,
+    ) -> Option<(u16, Vec<crate::ghostty::ScreenTextRow>)> {
+        self.0.screen_text_rows_range(start_row, end_row_exclusive)
+    }
+
     pub(crate) fn screen_text_snapshot_with_seq(
         &self,
     ) -> Option<(

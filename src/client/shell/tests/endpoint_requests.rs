@@ -229,6 +229,7 @@ fn failed_selection_copy_does_not_send_terminal_input() {
         Ok(crate::api::schema::ResponseResult::PaneSelection {
             pane_id: "pane_1".into(),
             text: String::new(),
+            range: None,
         }),
         Err(ClientShellEndpointError {
             code: Some("endpoint_cancelled".into()),
