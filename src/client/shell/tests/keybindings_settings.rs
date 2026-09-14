@@ -241,6 +241,128 @@ detach = "prefix+x"
 }
 
 #[test]
+fn repeatable_prefix_action_repeats_within_window_without_prefix() {
+    let config = toml::from_str::<Config>(
+        r#"
+[keys]
+prefix = "ctrl+a"
+repeat_time_ms = 10000
+next_tab = "repeat:prefix+ctrl+n"
+previous_tab = "repeat:prefix+ctrl+p"
+"#,
+    )
+    .expect("configured keybinds");
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    assert!(state.handle_input_bytes(&[0x01]).requests.is_empty());
+    let first = state.handle_input_bytes(&[0x0e]);
+    assert_eq!(first.actions.len(), 1, "prefix+ctrl+n switches tab");
+    assert!(first.requests.is_empty());
+
+    let repeat = state.handle_input_bytes(&[0x0e]);
+    assert_eq!(repeat.actions.len(), 1, "ctrl+n repeats within the window");
+    assert!(repeat.requests.is_empty(), "repeat must not reach the pane");
+
+    let other_direction = state.handle_input_bytes(&[0x10]);
+    assert_eq!(
+        other_direction.actions.len(),
+        1,
+        "any repeat-marked binding fires within the window"
+    );
+    assert!(other_direction.requests.is_empty());
+
+    let typed = state.handle_input_bytes(b"n");
+    assert!(typed.actions.is_empty());
+    assert_eq!(typed.requests.len(), 1, "plain n stays pane input");
+
+    let after_close = state.handle_input_bytes(&[0x0e]);
+    assert!(after_close.actions.is_empty());
+    assert_eq!(
+        after_close.requests.len(),
+        1,
+        "plain input closes the repeat window"
+    );
+}
+
+#[test]
+fn prefix_repeat_window_expires_and_zero_disables_it() {
+    let config = toml::from_str::<Config>(
+        r#"
+[keys]
+prefix = "ctrl+a"
+repeat_time_ms = 1
+next_tab = "repeat:prefix+ctrl+n"
+"#,
+    )
+    .expect("configured keybinds");
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    assert!(state.handle_input_bytes(&[0x01]).requests.is_empty());
+    assert_eq!(state.handle_input_bytes(&[0x0e]).actions.len(), 1);
+    std::thread::sleep(std::time::Duration::from_millis(50));
+    let expired = state.handle_input_bytes(&[0x0e]);
+    assert!(expired.actions.is_empty());
+    assert_eq!(
+        expired.requests.len(),
+        1,
+        "ctrl+n reaches the pane after the window expires"
+    );
+
+    let disabled = toml::from_str::<Config>(
+        r#"
+[keys]
+prefix = "ctrl+a"
+repeat_time_ms = 0
+next_tab = "repeat:prefix+ctrl+n"
+"#,
+    )
+    .expect("configured keybinds");
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&disabled));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    assert!(state.handle_input_bytes(&[0x01]).requests.is_empty());
+    assert_eq!(state.handle_input_bytes(&[0x0e]).actions.len(), 1);
+    let no_repeat = state.handle_input_bytes(&[0x0e]);
+    assert!(no_repeat.actions.is_empty());
+    assert_eq!(
+        no_repeat.requests.len(),
+        1,
+        "repeat_time_ms = 0 keeps ctrl+n as pane input"
+    );
+}
+
+#[test]
+fn unmarked_prefix_binding_does_not_arm_repeat() {
+    let config = toml::from_str::<Config>(
+        r#"
+[keys]
+prefix = "ctrl+a"
+repeat_time_ms = 10000
+next_tab = "prefix+ctrl+n"
+"#,
+    )
+    .expect("configured keybinds");
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&config));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+
+    assert!(state.handle_input_bytes(&[0x01]).requests.is_empty());
+    assert_eq!(state.handle_input_bytes(&[0x0e]).actions.len(), 1);
+    let second = state.handle_input_bytes(&[0x0e]);
+    assert!(second.actions.is_empty());
+    assert_eq!(
+        second.requests.len(),
+        1,
+        "a binding without repeat: never repeats"
+    );
+}
+
+#[test]
 fn prefix_endpoint_action_uses_public_api_with_stable_ids() {
     let mut config = Config::default();
     config.ui.prompt_new_tab_name = false;

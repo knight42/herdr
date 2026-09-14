@@ -482,6 +482,12 @@
           "description": "Prefix key(s) to enter prefix mode (e.g. \"ctrl+b\", \"f12\", \"esc\", or an array to accept several)."
         },
         {
+          "key": "keys.repeat_time_ms",
+          "type": "integer",
+          "default": "500",
+          "description": "Repeat window in milliseconds for prefix bindings marked repeat: (e.g. next_tab = \"repeat:prefix+ctrl+n\"), like tmux bind -r with repeat-time: within the window the bound key fires the action again without pressing the prefix. 0 disables repeating."
+        },
+        {
           "key": "keys.help",
           "type": "keybinding",
           "default": "\"prefix+?\"",
