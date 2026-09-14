@@ -407,8 +407,8 @@ impl TerminalRuntime {
         self.0.extract_selection(selection)
     }
 
-    pub fn logical_line_extent(&self, row: u32) -> Option<(u32, u32)> {
-        self.0.logical_line_extent(row)
+    pub fn logical_line_bounds(&self, row: u32) -> Option<(u32, u32, u16)> {
+        self.0.logical_line_bounds(row)
     }
 
     pub fn render(&self, frame: &mut Frame, area: Rect, show_cursor: bool) {

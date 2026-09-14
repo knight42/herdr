@@ -134,8 +134,7 @@ impl ClientShellState {
             outcome.repaint = true;
             return true;
         }
-        self.word_selection_gesture = None;
-        self.pending_line_selection = None;
+        self.cancel_click_selection_gestures();
         if self.copy_or_terminal_mode() != ClientShellMode::Copy && self.selection.take().is_some()
         {
             self.stop_selection_autoscroll();
@@ -530,8 +529,7 @@ impl ClientShellState {
         if matches!(key.code, KeyCode::Modifier(_)) {
             return None;
         }
-        self.word_selection_gesture = None;
-        self.pending_line_selection = None;
+        self.cancel_click_selection_gestures();
         if self.mode != ClientShellMode::Copy
             && self.copy_or_terminal_mode() != ClientShellMode::Copy
             && !self.config.copy_on_select

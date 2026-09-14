@@ -168,8 +168,9 @@ pub enum ResponseResult {
     },
     PaneLogicalLine {
         pane_id: String,
-        start_row: u32,
-        end_row: u32,
+        /// Column 0 of the first row through the last text cell; `None` when
+        /// the logical line holds no text.
+        range: Option<PaneTextRange>,
     },
     PaneCopyMotion {
         pane_id: String,

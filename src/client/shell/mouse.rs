@@ -1886,8 +1886,7 @@ impl ClientShellState {
                 }
                 self.stop_selection_autoscroll();
                 self.selection_highlight_clear_deadline = None;
-                self.word_selection_gesture = None;
-                self.pending_line_selection = None;
+                self.cancel_click_selection_gestures();
                 let previous_pane_click = self.last_pane_click.take();
                 self.workspace_press = None;
                 self.tab_press = None;
@@ -2202,12 +2201,7 @@ impl ClientShellState {
                             count: 1,
                         };
                         if mouse.modifiers.is_empty() {
-                            if let Some(previous) = previous_pane_click
-                                .as_ref()
-                                .filter(|previous| previous.chains_with(&click))
-                            {
-                                click.count = previous.count.saturating_add(1);
-                            }
+                            click.count = click.count_after(previous_pane_click.as_ref());
                         }
                         match click.count {
                             2 => {

@@ -287,13 +287,18 @@ impl App {
         {
             return encode_error(id, "stale_content", "pane content changed");
         }
-        let Some((start_row, end_row)) = runtime.logical_line_extent(params.row) else {
-            return encode_error(
-                id,
-                "logical_line_unavailable",
-                "terminal row is unavailable",
-            );
-        };
+        let range = runtime
+            .logical_line_bounds(params.row)
+            .map(|(start_row, end_row, end_col)| PaneTextRange {
+                start: PaneTextPoint {
+                    row: start_row,
+                    col: 0,
+                },
+                end: PaneTextPoint {
+                    row: end_row,
+                    col: end_col,
+                },
+            });
         if params.content_revision.is_some() && runtime.content_seq() != before {
             return encode_error(id, "stale_content", "pane content changed");
         }
@@ -301,8 +306,7 @@ impl App {
             id,
             ResponseResult::PaneLogicalLine {
                 pane_id: params.pane_id,
-                start_row,
-                end_row,
+                range,
             },
         )
     }
@@ -2491,54 +2495,73 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn api_pane_logical_line_read_reports_soft_wrapped_extent() {
+    async fn api_pane_logical_line_read_reports_text_bounds() {
         let (mut app, public_pane_id) = app_with_test_workspace();
         let pane_id = app.state.workspaces[0].tabs[0].root_pane;
         app.state.insert_test_runtime(
             pane_id,
             crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
                 10,
-                5,
-                1000,
-                b"0123456789ABCDE\r\nnext",
+                8,
+                4000,
+                "0123456789ABCDE\r\n  in\r\nabc 日本語\r\n\r\nsp   ".as_bytes(),
             ),
         );
 
-        let response = app.handle_pane_logical_line_read(
-            "req".into(),
-            PaneLogicalLineReadParams {
-                pane_id: public_pane_id.clone(),
-                row: 1,
-                content_revision: None,
-            },
-        );
-        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
-        assert_eq!(
-            success.result,
-            ResponseResult::PaneLogicalLine {
-                pane_id: public_pane_id.clone(),
-                start_row: 0,
-                end_row: 1,
+        let range_at = |app: &mut App, row: u32| {
+            let response = app.handle_pane_logical_line_read(
+                format!("req{row}"),
+                PaneLogicalLineReadParams {
+                    pane_id: public_pane_id.clone(),
+                    row,
+                    content_revision: None,
+                },
+            );
+            let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+            match success.result {
+                ResponseResult::PaneLogicalLine { pane_id, range } => {
+                    assert_eq!(pane_id, public_pane_id);
+                    range
+                }
+                other => panic!("expected logical line result, got {other:?}"),
             }
-        );
+        };
 
-        let response = app.handle_pane_logical_line_read(
-            "req2".into(),
-            PaneLogicalLineReadParams {
-                pane_id: public_pane_id,
-                row: 2,
-                content_revision: None,
-            },
+        let point = |row, col| PaneTextPoint { row, col };
+        // A click on either visual row of the soft-wrapped line selects both rows.
+        assert_eq!(
+            range_at(&mut app, 1),
+            Some(PaneTextRange {
+                start: point(0, 0),
+                end: point(1, 4),
+            })
         );
-        let success: SuccessResponse = serde_json::from_str(&response).unwrap();
-        assert!(matches!(
-            success.result,
-            ResponseResult::PaneLogicalLine {
-                start_row: 2,
-                end_row: 2,
-                ..
-            }
-        ));
+        // Leading indentation stays part of the line.
+        assert_eq!(
+            range_at(&mut app, 2),
+            Some(PaneTextRange {
+                start: point(2, 0),
+                end: point(2, 3),
+            })
+        );
+        // Wide characters occupy two display cells; the range ends on the tail cell.
+        assert_eq!(
+            range_at(&mut app, 3),
+            Some(PaneTextRange {
+                start: point(3, 0),
+                end: point(3, 9),
+            })
+        );
+        // Blank rows select nothing.
+        assert_eq!(range_at(&mut app, 4), None);
+        // Trailing whitespace stays outside the selection.
+        assert_eq!(
+            range_at(&mut app, 5),
+            Some(PaneTextRange {
+                start: point(5, 0),
+                end: point(5, 1),
+            })
+        );
     }
 
     #[tokio::test]

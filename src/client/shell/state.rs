@@ -701,7 +701,6 @@ pub(super) enum PendingEndpointKind {
     },
     LineSelection {
         pane_id: String,
-        end_col: u16,
         generation: u64,
     },
     PaneLinkResolve {
@@ -820,11 +819,19 @@ pub(super) struct ClientPaneClick {
 }
 
 impl ClientPaneClick {
-    pub(super) fn chains_with(&self, next: &Self) -> bool {
-        self.pane_id == next.pane_id
-            && next.at.duration_since(self.at) <= std::time::Duration::from_millis(350)
-            && self.viewport_row.abs_diff(next.viewport_row) <= 1
-            && self.col.abs_diff(next.col) <= 1
+    /// Position of this click in the multi-click chain: one past `previous`
+    /// when it lands on the same pane within 350ms and one cell of drift,
+    /// otherwise 1. The triple-click handler does not re-arm the chain, so a
+    /// fourth click restarts at 1.
+    pub(super) fn count_after(&self, previous: Option<&Self>) -> u8 {
+        previous
+            .filter(|previous| {
+                self.pane_id == previous.pane_id
+                    && self.at.duration_since(previous.at) <= std::time::Duration::from_millis(350)
+                    && self.viewport_row.abs_diff(previous.viewport_row) <= 1
+                    && self.col.abs_diff(previous.col) <= 1
+            })
+            .map_or(1, |previous| previous.count.saturating_add(1))
     }
 }
 
@@ -956,6 +963,7 @@ pub(crate) struct ClientShellState {
     pub(super) word_selection_gesture: Option<ClientWordSelection>,
     pub(super) word_selection_generation: u64,
     pub(super) pending_line_selection: Option<u64>,
+    pub(super) line_selection_generation: u64,
     pub(super) copy_mode: Option<ClientCopyModeState>,
     pub(super) copy_session_generation: u64,
     pub(super) copy_operation_in_flight: bool,
@@ -1024,6 +1032,14 @@ pub(super) struct WorkspaceEntry {
 }
 
 impl ClientShellState {
+    /// Cancel both pointer selection gestures so a stale word or line reply
+    /// cannot land after newer input. Every input path that abandons a
+    /// gesture must go through here.
+    pub(super) fn cancel_click_selection_gestures(&mut self) {
+        self.word_selection_gesture = None;
+        self.pending_line_selection = None;
+    }
+
     pub(crate) fn new(mut config: ClientShellConfig) -> Self {
         let preferences = config.preferences.clone();
         let local_config_diagnostic = config.startup_config_diagnostic.take();
@@ -1117,6 +1133,7 @@ impl ClientShellState {
             word_selection_gesture: None,
             word_selection_generation: 0,
             pending_line_selection: None,
+            line_selection_generation: 0,
             copy_mode: None,
             copy_session_generation: 0,
             copy_operation_in_flight: false,
@@ -1307,8 +1324,7 @@ impl ClientShellState {
         self.selection_autoscroll = None;
         self.selection_autoscroll_deadline = None;
         self.selection_highlight_clear_deadline = None;
-        self.word_selection_gesture = None;
-        self.pending_line_selection = None;
+        self.cancel_click_selection_gestures();
         self.copy_mode = None;
         if self.mode == ClientShellMode::Copy {
             self.mode = ClientShellMode::Terminal;
@@ -1476,8 +1492,7 @@ impl ClientShellState {
             self.selection_autoscroll = None;
             self.selection_autoscroll_deadline = None;
             self.selection_highlight_clear_deadline = None;
-            self.word_selection_gesture = None;
-            self.pending_line_selection = None;
+            self.cancel_click_selection_gestures();
             self.last_pane_click = None;
         }
         if let Some(copy_pane_id) = self
@@ -1702,8 +1717,7 @@ impl ClientShellState {
             self.selection_autoscroll = None;
             self.selection_autoscroll_deadline = None;
             self.selection_highlight_clear_deadline = None;
-            self.word_selection_gesture = None;
-            self.pending_line_selection = None;
+            self.cancel_click_selection_gestures();
             self.copy_mode = None;
             self.reset_copy_pipeline();
             self.chrome_drag = None;
@@ -1766,7 +1780,7 @@ impl ClientShellState {
             }
         });
         if selection_content_changed {
-            self.word_selection_gesture = None;
+            self.cancel_click_selection_gestures();
             self.selection = None;
             self.stop_selection_autoscroll();
             self.selection_highlight_clear_deadline = None;

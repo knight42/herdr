@@ -9928,18 +9928,19 @@
             },
             {
               "properties": {
-                "end_row": {
-                  "format": "uint32",
-                  "minimum": 0,
-                  "type": "integer"
-                },
                 "pane_id": {
                   "type": "string"
                 },
-                "start_row": {
-                  "format": "uint32",
-                  "minimum": 0,
-                  "type": "integer"
+                "range": {
+                  "anyOf": [
+                    {
+                      "$ref": "#/schemas/success_response/$defs/PaneTextRange"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ],
+                  "description": "Column 0 of the first row through the last text cell; `None` when\nthe logical line holds no text."
                 },
                 "type": {
                   "const": "pane_logical_line",
@@ -9948,9 +9949,7 @@
               },
               "required": [
                 "type",
-                "pane_id",
-                "start_row",
-                "end_row"
+                "pane_id"
               ],
               "type": "object"
             },

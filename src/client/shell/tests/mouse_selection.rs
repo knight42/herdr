@@ -665,6 +665,57 @@ fn double_click_drag_autoscroll_keeps_absolute_word_anchor() {
 }
 
 #[test]
+fn pane_click_chain_counting() {
+    let base = std::time::Instant::now();
+    let click = |pane_id: &str, viewport_row: u16, col: u16, at, count| ClientPaneClick {
+        pane_id: pane_id.into(),
+        viewport_row,
+        col,
+        at,
+        count,
+    };
+    let first = click("pane_1", 4, 8, base, 1);
+    let second = click(
+        "pane_1",
+        4,
+        9,
+        base + std::time::Duration::from_millis(200),
+        1,
+    );
+    assert_eq!(second.count_after(Some(&first)), 2);
+    let third = click(
+        "pane_1",
+        5,
+        9,
+        second.at + std::time::Duration::from_millis(200),
+        1,
+    );
+    assert_eq!(
+        third.count_after(Some(&click("pane_1", 4, 9, second.at, 2))),
+        3
+    );
+    // The chain restarts without a previous click, across panes, after the
+    // 350ms window, and past one cell of drift.
+    assert_eq!(second.count_after(None), 1);
+    assert_eq!(second.count_after(Some(&click("pane_2", 4, 9, base, 1))), 1);
+    assert_eq!(
+        click(
+            "pane_1",
+            4,
+            8,
+            base + std::time::Duration::from_millis(400),
+            1
+        )
+        .count_after(Some(&first)),
+        1
+    );
+    assert_eq!(
+        second.count_after(Some(&click("pane_1", 4, 11, base, 1))),
+        1
+    );
+}
+
+#[test]
 fn client_triple_click_selects_and_copies_logical_line() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));
@@ -727,8 +778,10 @@ fn client_triple_click_selects_and_copies_logical_line() {
         &line_request_id,
         Ok(crate::api::schema::ResponseResult::PaneLogicalLine {
             pane_id: "pane_1".into(),
-            start_row: 0,
-            end_row: 1,
+            range: Some(crate::api::schema::PaneTextRange {
+                start: crate::api::schema::PaneTextPoint { row: 0, col: 0 },
+                end: crate::api::schema::PaneTextPoint { row: 1, col: 10 },
+            }),
         }),
     );
     assert!(repaint);
@@ -744,11 +797,7 @@ fn client_triple_click_selects_and_copies_logical_line() {
         &request.method,
         crate::api::schema::Method::PaneSelectionRead(params)
             if params.anchor == crate::api::schema::PaneTextPoint { row: 0, col: 0 }
-                && params.cursor
-                    == crate::api::schema::PaneTextPoint {
-                        row: 1,
-                        col: pane.inner_rect.width - 1,
-                    }
+                && params.cursor == crate::api::schema::PaneTextPoint { row: 1, col: 10 }
     ));
     let (_, actions) = state.handle_endpoint_result(
         "boot-1",

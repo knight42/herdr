@@ -310,8 +310,8 @@ impl ClientShellState {
                     .find(|pane| pane.pane_id == hit.pane_id)
             })
             .map(|pane| pane.content_revision);
-        self.word_selection_generation = self.word_selection_generation.saturating_add(1);
-        let generation = self.word_selection_generation;
+        self.line_selection_generation = self.line_selection_generation.saturating_add(1);
+        let generation = self.line_selection_generation;
         self.pending_line_selection = Some(generation);
         if !self.push_endpoint_method_with_kind(
             crate::api::schema::Method::PaneLogicalLineRead(
@@ -323,7 +323,6 @@ impl ClientShellState {
             ),
             PendingEndpointKind::LineSelection {
                 pane_id: hit.pane_id.clone(),
-                end_col: hit.inner_rect.width.saturating_sub(1),
                 generation,
             },
             outcome,
@@ -665,11 +664,9 @@ impl ClientShellState {
             }
             PendingEndpointKind::LineSelection {
                 pane_id,
-                end_col,
                 generation,
             } => {
                 if self.pending_line_selection != Some(generation)
-                    || self.word_selection_generation != generation
                     || self.snapshot.as_deref().is_none_or(|snapshot| {
                         !snapshot.panes.iter().any(|pane| pane.pane_id == pane_id)
                     })
@@ -677,12 +674,11 @@ impl ClientShellState {
                     return (false, Vec::new());
                 }
                 self.pending_line_selection = None;
-                let (start_row, end_row) = match result {
+                let range = match result {
                     Ok(crate::api::schema::ResponseResult::PaneLogicalLine {
                         pane_id: returned_pane_id,
-                        start_row,
-                        end_row,
-                    }) if returned_pane_id == pane_id => (start_row, end_row),
+                        range,
+                    }) if returned_pane_id == pane_id => range,
                     Ok(crate::api::schema::ResponseResult::PaneLogicalLine { .. }) => {
                         return (false, Vec::new())
                     }
@@ -694,8 +690,15 @@ impl ClientShellState {
                     }
                     Err(_) => return (true, Vec::new()),
                 };
-                let mut selection =
-                    crate::selection::Selection::line_range(pane_id, start_row, end_row, end_col);
+                let Some(range) = range else {
+                    self.selection = None;
+                    return (true, Vec::new());
+                };
+                let mut selection = crate::selection::Selection::absolute_range(
+                    pane_id,
+                    (range.start.row, range.start.col),
+                    (range.end.row, range.end.col),
+                );
                 if !selection.finish() {
                     return (false, Vec::new());
                 }
