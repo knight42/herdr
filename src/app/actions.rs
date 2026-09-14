@@ -1326,8 +1326,9 @@ fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan
 ///
 /// ASCII is limited to RFC 3986 reserved/unreserved punctuation plus `%` and
 /// `|`. Non-ASCII continues the span only as an IRI segment glued to the URL
-/// body ("wiki/路径"); after trailing punctuation it reads as prose
-/// ("…knight42),看…"), and fullwidth punctuation always ends the span.
+/// body ("wiki/路径"); after any ASCII punctuation other than path/query
+/// joiners it reads as prose ("…knight42),看…", "…knight42(列…"), and
+/// fullwidth punctuation always ends the span.
 fn is_url_span_char(ch: char, prev: char) -> bool {
     if ch.is_ascii() {
         return ch.is_ascii_alphanumeric()
@@ -1368,10 +1369,12 @@ fn is_url_span_char(ch: char, prev: char) -> bool {
     {
         return false;
     }
-    !matches!(
-        prev,
-        '"' | '\'' | '`' | '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}'
-    )
+    // Non-ASCII continues an IRI only when glued to the URL body: more
+    // non-ASCII, alphanumerics, or path/query joiners. After any other
+    // punctuation ("…knight42),看…", "…knight42(列…") it reads as prose.
+    !prev.is_ascii()
+        || prev.is_ascii_alphanumeric()
+        || matches!(prev, '/' | '-' | '_' | '~' | '%' | '=' | '&' | '+')
 }
 
 fn trim_url_edges(cells: &[TextCell], span: CellSpan) -> Option<CellSpan> {
@@ -1389,6 +1392,8 @@ fn trim_url_edges(cells: &[TextCell], span: CellSpan) -> Option<CellSpan> {
 fn should_trim_trailing_url_cell(cells: &[TextCell], start: usize, end: usize) -> bool {
     match cells[end].ch {
         '"' | '\'' | '`' | '.' | ',' | ';' | ':' | '!' | '?' => true,
+        // A trailing opener is always dangling prose punctuation ("url(列").
+        '(' | '[' | '{' => true,
         ')' => !trailing_url_closer_is_balanced(cells, start, end, '(', ')'),
         ']' => !trailing_url_closer_is_balanced(cells, start, end, '[', ']'),
         '}' => !trailing_url_closer_is_balanced(cells, start, end, '{', '}'),
@@ -2747,6 +2752,12 @@ mod tests {
         assert_eq!(
             selected_url("看 https://a.com/x，注意", "a.com"),
             Some("https://a.com/x")
+        );
+        // Prose glued on after an opening bracket ends the span too, and the
+        // dangling opener is trimmed off.
+        assert_eq!(
+            selected_url("见 https://github.com/knight42(列 1-27)", "github"),
+            Some("https://github.com/knight42")
         );
     }
 
