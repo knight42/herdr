@@ -107,6 +107,7 @@ operations::define_operations! {
     PaneClear(PaneTarget) => "pane.clear", true, true;
     PaneEditScrollback(PaneTarget) => "pane.edit_scrollback", true, true;
     PaneSelectionRead(PaneSelectionReadParams) => "pane.selection.read", false, true;
+    PaneLogicalLineRead(PaneLogicalLineReadParams) => "pane.logical_line.read", false, true;
     PaneCopyMotion(PaneCopyMotionParams) => "pane.copy_motion", false, true;
     PaneCopySearch(PaneCopySearchParams) => "pane.copy_search", false, true;
     PaneList(PaneListParams) => "pane.list", false, false;

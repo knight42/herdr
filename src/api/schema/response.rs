@@ -166,6 +166,12 @@ pub enum ResponseResult {
         pane_id: String,
         text: String,
     },
+    PaneLogicalLine {
+        pane_id: String,
+        /// Column 0 of the first row through the last text cell; `None` when
+        /// the logical line holds no text.
+        range: Option<PaneTextRange>,
+    },
     PaneCopyMotion {
         pane_id: String,
         cursor: PaneTextPoint,
