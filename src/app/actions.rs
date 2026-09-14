@@ -1307,7 +1307,7 @@ fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan
             || (at_token_start && chars_start_with_linkable_domain(chars))
         {
             let mut end = start;
-            while end + 1 < cells.len() && !cells[end + 1].ch.is_whitespace() {
+            while end + 1 < cells.len() && is_url_span_char(cells[end + 1].ch, cells[end].ch) {
                 end += 1;
             }
             if clicked_idx >= start && clicked_idx <= end {
@@ -1320,6 +1320,58 @@ fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan
         }
     }
     None
+}
+
+/// Decides whether `ch` extends a URL span whose last character is `prev`.
+///
+/// ASCII is limited to RFC 3986 reserved/unreserved punctuation plus `%` and
+/// `|`. Non-ASCII continues the span only as an IRI segment glued to the URL
+/// body ("wiki/路径"); after trailing punctuation it reads as prose
+/// ("…knight42),看…"), and fullwidth punctuation always ends the span.
+fn is_url_span_char(ch: char, prev: char) -> bool {
+    if ch.is_ascii() {
+        return ch.is_ascii_alphanumeric()
+            || matches!(
+                ch,
+                '-' | '.'
+                    | '_'
+                    | '~'
+                    | ':'
+                    | '/'
+                    | '?'
+                    | '#'
+                    | '['
+                    | ']'
+                    | '@'
+                    | '!'
+                    | '$'
+                    | '&'
+                    | '\''
+                    | '('
+                    | ')'
+                    | '*'
+                    | '+'
+                    | ','
+                    | ';'
+                    | '='
+                    | '%'
+                    | '|'
+                    | '{'
+                    | '}'
+            );
+    }
+    if ch.is_whitespace()
+        || matches!(
+            ch,
+            '（' | '）' | '：' | '；' | '、' | '。' | '，' | '！' | '？' | '「' | '」' | '…'
+        )
+    {
+        return false;
+    }
+    !matches!(
+        prev,
+        '"' | '\'' | '`' | '.' | ',' | ';' | ':' | '!' | '?' | ')' | ']' | '}'
+    )
 }
 
 fn trim_url_edges(cells: &[TextCell], span: CellSpan) -> Option<CellSpan> {
@@ -2666,6 +2718,35 @@ mod tests {
         assert_eq!(
             selected_url("pull git@github.com:knight42/kt.git", "knight"),
             None
+        );
+    }
+
+    #[test]
+    fn url_span_stops_at_non_url_characters() {
+        // URLs glued to CJK prose end at the last URL character, with
+        // trailing punctuation trimmed as usual.
+        assert_eq!(
+            selected_url("看 https://github.com/knight42),看新窗口 呢", "github"),
+            Some("https://github.com/knight42")
+        );
+        assert_eq!(
+            selected_url("克隆 github.com/knight42/kt,好的", "knight"),
+            Some("github.com/knight42/kt")
+        );
+        // Balanced closing parens still belong to the URL.
+        assert_eq!(
+            selected_url("见 https://en.wikipedia.org/wiki/Rust_(lang)后缀", "wiki"),
+            Some("https://en.wikipedia.org/wiki/Rust_(lang)")
+        );
+        // Unencoded IRI segments glued to the URL body stay part of the link,
+        // but fullwidth punctuation ends it.
+        assert_eq!(
+            selected_url("open https://a.com/wiki/中文 now", "a.com"),
+            Some("https://a.com/wiki/中文")
+        );
+        assert_eq!(
+            selected_url("看 https://a.com/x，注意", "a.com"),
+            Some("https://a.com/x")
         );
     }
 
