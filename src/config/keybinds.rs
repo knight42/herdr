@@ -150,6 +150,9 @@ impl BindingTrigger {
 pub struct ResolvedBinding {
     pub trigger: BindingTrigger,
     pub label: String,
+    /// Marked with `repeat:` in the config: after this prefix binding fires,
+    /// it fires again without the prefix while the repeat window is open.
+    pub repeat: bool,
 }
 
 impl ResolvedBinding {
@@ -223,6 +226,13 @@ impl ActionKeybinds {
         self.bindings
             .iter()
             .any(|binding| binding.trigger.is_prefix() && binding.matches_terminal_key(key))
+    }
+
+    /// Whether `key` matches a prefix binding marked `repeat:`.
+    pub fn prefix_repeat_key(&self, key: &TerminalKey) -> bool {
+        self.bindings.iter().any(|binding| {
+            binding.repeat && binding.trigger.is_prefix() && binding.matches_terminal_key(key)
+        })
     }
 
     pub fn matches_direct_key(&self, key: &TerminalKey) -> bool {
@@ -317,6 +327,8 @@ pub struct NavigateKeybinds {
 /// Parsed keybinds for Herdr actions.
 #[derive(Debug, Clone)]
 pub struct Keybinds {
+    /// Repeat window after a `repeat:` prefix binding fires; 0 disables repeating.
+    pub repeat_time_ms: u64,
     pub navigate: NavigateKeybinds,
     pub help: ActionKeybinds,
     pub settings: ActionKeybinds,
@@ -478,6 +490,7 @@ impl Config {
         }
 
         let mut keybinds = Keybinds {
+            repeat_time_ms: self.keys.repeat_time_ms,
             navigate: NavigateKeybinds {
                 workspace_up: empty_action!(),
                 workspace_down: empty_action!(),
@@ -821,10 +834,11 @@ fn parse_action_bindings(
             continue;
         }
         match parse_binding_string(raw) {
-            Some(ParsedBinding::Single(binding)) => {
+            Some(ParsedBinding::Single(mut binding)) => {
                 if reject_binding(field, &binding, registry, diagnostics, source) {
                     continue;
                 }
+                clear_repeat_flag_without_prefix(field, &mut binding, diagnostics);
                 registry.register(&binding, field, source);
                 bindings.push(binding);
             }
@@ -857,10 +871,11 @@ fn parse_navigate_bindings(
             continue;
         }
         match parse_binding_string(raw) {
-            Some(ParsedBinding::Single(binding)) => {
+            Some(ParsedBinding::Single(mut binding)) => {
                 if reject_navigate_binding(field, &binding, registry, diagnostics, source) {
                     continue;
                 }
+                clear_repeat_flag_without_prefix(field, &mut binding, diagnostics);
                 registry.register(&binding, field, source);
                 bindings.push(binding);
             }
@@ -918,6 +933,22 @@ fn parse_indexed_bindings(
     bindings
 }
 
+fn clear_repeat_flag_without_prefix(
+    field: &str,
+    binding: &mut ResolvedBinding,
+    diagnostics: &mut Vec<String>,
+) {
+    if binding.repeat && !binding.trigger.is_prefix() {
+        let diag = format!(
+            "repeat: requires a prefix binding: {field} = {:?}; ignoring repeat flag",
+            binding.label
+        );
+        warn!(message = %diag, "config diagnostic");
+        diagnostics.push(diag);
+        binding.repeat = false;
+    }
+}
+
 fn push_indexed_binding(
     field: &str,
     binding: ResolvedBinding,
@@ -937,6 +968,14 @@ fn push_indexed_binding(
     }
     if reject_binding(field, &binding, registry, diagnostics, source) {
         return;
+    }
+    if binding.repeat {
+        let diag = format!(
+            "repeat: is not supported for indexed keybindings: {field} = {:?}; ignoring repeat flag",
+            binding.label
+        );
+        warn!(message = %diag, "config diagnostic");
+        diagnostics.push(diag);
     }
     registry.register(&binding, field, source);
     bindings.push(IndexedKeybind {
@@ -973,6 +1012,7 @@ fn append_legacy_indexed_bindings(
         let binding = ResolvedBinding {
             trigger: BindingTrigger::Direct(combo),
             label: format!("{}+{idx}", configured_label.trim()),
+            repeat: false,
         };
         if reject_binding(field, &binding, registry, diagnostics, source) {
             continue;
@@ -1073,6 +1113,10 @@ fn reject_binding(
 
 fn parse_binding_string(raw: &str) -> Option<ParsedBinding> {
     let trimmed = raw.trim();
+    let (repeat, trimmed) = match trimmed.strip_prefix("repeat:") {
+        Some(rest) => (true, rest.trim_start()),
+        None => (false, trimmed),
+    };
     let (trigger_prefix, body) = if let Some(rest) = trimmed.strip_prefix("prefix+") {
         (true, rest)
     } else {
@@ -1098,6 +1142,7 @@ fn parse_binding_string(raw: &str) -> Option<ParsedBinding> {
                     } else {
                         key_label
                     },
+                    repeat,
                 }
             })
             .collect();
@@ -1117,6 +1162,7 @@ fn parse_binding_string(raw: &str) -> Option<ParsedBinding> {
             BindingTrigger::Direct(combo)
         },
         label,
+        repeat,
     }))
 }
 
@@ -1587,6 +1633,43 @@ next_tab = "prefix+n"
                 KeyCode::Char('g'),
                 KeyModifiers::SHIFT
             ))]
+        );
+    }
+
+    #[test]
+    fn repeat_time_flows_from_keys_config_and_profile() {
+        let config: Config = toml::from_str("[keys]\nrepeat_time_ms = 250").expect("config");
+        assert_eq!(config.keybinds().repeat_time_ms, 250);
+        assert_eq!(Config::default().keybinds().repeat_time_ms, 500);
+
+        let profile = config
+            .local_keybindings_profile_toml()
+            .expect("profile toml");
+        assert!(
+            profile.contains("repeat_time_ms = 250"),
+            "profile: {profile}"
+        );
+    }
+
+    #[test]
+    fn repeat_flag_parses_only_on_prefix_bindings() {
+        let config: Config = toml::from_str(
+            "[keys]\nnext_tab = \"repeat:prefix+ctrl+n\"\nzoom = \"repeat:ctrl+alt+z\"",
+        )
+        .expect("config");
+        let (live, diagnostics) = config.live_keybinds_with_diagnostics().expect("keybinds");
+
+        let next_tab = &live.keybinds.next_tab.bindings[0];
+        assert!(next_tab.repeat);
+        assert_eq!(next_tab.label, "prefix+ctrl+n");
+
+        let zoom = &live.keybinds.zoom.bindings[0];
+        assert!(!zoom.repeat, "repeat flag is dropped on direct bindings");
+        assert!(
+            diagnostics
+                .iter()
+                .any(|diag| diag.contains("repeat: requires a prefix binding")),
+            "diagnostics: {diagnostics:?}"
         );
     }
 

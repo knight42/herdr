@@ -89,12 +89,35 @@ pub(crate) fn resolve_prefix_binding(
     })
 }
 
+/// Whether `key` triggers a prefix binding marked `repeat:` in the config,
+/// meaning it fires again without the prefix while the repeat window is open.
+pub(crate) fn prefix_binding_repeats(keybinds: &Keybinds, key: &TerminalKey) -> bool {
+    fn any_repeat(keybinds: &Keybinds, key: &TerminalKey) -> bool {
+        non_indexed_bindings(keybinds).any(|(bindings, _)| bindings.prefix_repeat_key(key))
+            || keybinds
+                .custom_commands
+                .iter()
+                .any(|command| command.bindings.prefix_repeat_key(key))
+    }
+    any_repeat(keybinds, key)
+        || generated_character_key(key)
+            .is_some_and(|generated_key| any_repeat(keybinds, &generated_key))
+}
+
 pub(crate) fn resolve_non_indexed_action(
     keybinds: &Keybinds,
     key: &TerminalKey,
     dispatch: KeybindDispatch,
 ) -> Option<KeybindAction> {
-    for (bindings, action) in [
+    non_indexed_bindings(keybinds)
+        .find(|(bindings, _)| action_matches(bindings, key, dispatch))
+        .map(|(_, action)| action)
+}
+
+fn non_indexed_bindings(
+    keybinds: &Keybinds,
+) -> impl Iterator<Item = (&crate::config::ActionKeybinds, KeybindAction)> {
+    [
         (&keybinds.help, KeybindAction::Help),
         (&keybinds.settings, KeybindAction::Settings),
         (&keybinds.workspace_picker, KeybindAction::WorkspacePicker),
@@ -152,12 +175,8 @@ pub(crate) fn resolve_non_indexed_action(
         ),
         (&keybinds.detach, KeybindAction::Detach),
         (&keybinds.goto, KeybindAction::OpenNavigator),
-    ] {
-        if action_matches(bindings, key, dispatch) {
-            return Some(action);
-        }
-    }
-    None
+    ]
+    .into_iter()
 }
 
 pub(crate) fn resolve_custom_command(

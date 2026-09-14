@@ -333,6 +333,11 @@ pub struct LoadedConfig {
 pub struct KeysConfig {
     /// Prefix key to enter prefix mode (e.g. "ctrl+b", "f12", "esc").
     pub prefix: String,
+    /// Repeat window in milliseconds for prefix bindings marked `repeat:`
+    /// (e.g. `next_tab = "repeat:prefix+ctrl+n"`), like tmux `bind -r` with
+    /// repeat-time: within the window the bound key fires the action again
+    /// without pressing the prefix. 0 disables repeating. Default: 500.
+    pub repeat_time_ms: u64,
     /// Open keybinding help. Default: "prefix+?"
     pub help: BindingConfig,
     /// Open settings. Default: "prefix+s"
@@ -464,6 +469,8 @@ pub struct KeysConfig {
 pub(crate) struct KeysConfigOverlay {
     #[serde(skip_serializing_if = "Option::is_none")]
     prefix: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    repeat_time_ms: Option<u64>,
     #[serde(skip_serializing_if = "Option::is_none")]
     help: Option<BindingConfig>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -610,6 +617,7 @@ impl<'de> Deserialize<'de> for KeysConfig {
         }
 
         apply_field!(prefix);
+        apply_field!(repeat_time_ms);
         apply_field!(help);
         apply_field!(settings);
         apply_field!(new_workspace);
@@ -739,6 +747,7 @@ impl KeysConfig {
         copy_effective_action_field!(next_agent, keybinds.next_agent);
         copy_effective_indexed_field!(focus_agent, keybinds.focus_agent);
         copy_user_field!(remote_image_paste);
+        copy_user_field!(repeat_time_ms);
         copy_effective_action_field!(new_tab, keybinds.new_tab);
         copy_effective_action_field!(rename_tab, keybinds.rename_tab);
         copy_effective_action_field!(previous_tab, keybinds.previous_tab);
@@ -1082,6 +1091,7 @@ impl Default for KeysConfig {
     fn default() -> Self {
         Self {
             prefix: "ctrl+b".into(),
+            repeat_time_ms: 500,
             help: BindingConfig::one("prefix+?"),
             settings: BindingConfig::one("prefix+s"),
             new_workspace: BindingConfig::one("prefix+shift+n"),

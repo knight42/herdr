@@ -557,6 +557,12 @@ impl ClientShellState {
 
         match self.mode {
             ClientShellMode::Terminal => {
+                if let Some(binding) = self.take_prefix_repeat(key) {
+                    self.arm_prefix_repeat(key);
+                    self.record_binding(binding, outcome);
+                    outcome.repaint = true;
+                    return None;
+                }
                 if let Some(binding) =
                     crate::input::resolve_direct_binding(&self.config.keybinds.keybinds, key)
                 {
@@ -593,6 +599,7 @@ impl ClientShellState {
                 {
                     self.mode = return_mode;
                     outcome.repaint = true;
+                    self.arm_prefix_repeat(key);
                     self.record_binding(binding, outcome);
                     return None;
                 }
@@ -618,6 +625,33 @@ impl ClientShellState {
                 None
             }
         }
+    }
+
+    /// Arm the tmux-style repeat window when the prefix binding `key` just
+    /// triggered is marked `repeat:` in the config.
+    fn arm_prefix_repeat(&mut self, key: &crate::input::TerminalKey) {
+        let window_ms = self.config.keybinds.keybinds.repeat_time_ms;
+        self.prefix_repeat_deadline = (window_ms > 0
+            && crate::input::prefix_binding_repeats(&self.config.keybinds.keybinds, key))
+        .then(|| std::time::Instant::now() + std::time::Duration::from_millis(window_ms));
+    }
+
+    /// Within the repeat window, a key bound with `repeat:` fires its prefix
+    /// binding again without the prefix, so holding the modifier and tapping
+    /// the action key keeps navigating. Any other key closes the window and
+    /// is handled normally.
+    fn take_prefix_repeat(
+        &mut self,
+        key: &crate::input::TerminalKey,
+    ) -> Option<crate::input::KeybindMatch> {
+        let deadline = self.prefix_repeat_deadline?;
+        if std::time::Instant::now() > deadline
+            || !crate::input::prefix_binding_repeats(&self.config.keybinds.keybinds, key)
+        {
+            self.prefix_repeat_deadline = None;
+            return None;
+        }
+        crate::input::resolve_prefix_binding(&self.config.keybinds.keybinds, key)
     }
 
     pub(super) fn copy_or_terminal_mode(&self) -> ClientShellMode {
