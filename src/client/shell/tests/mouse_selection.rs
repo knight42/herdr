@@ -109,7 +109,7 @@ fn ctrl_click_routes_link_activation_through_endpoint_then_client_host() {
     );
     assert!(matches!(
         &actions[..],
-        [ClientShellAction::OpenSafeWebUrl(url)] if url == "https://example.test"
+        [ClientShellAction::OpenUrl(url)] if url == "https://example.test"
     ));
     assert!(!state.url_click_consumes_until_up);
 }
