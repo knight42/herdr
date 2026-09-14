@@ -1307,7 +1307,7 @@ fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan
             || (at_token_start && chars_start_with_linkable_domain(chars))
         {
             let mut end = start;
-            while end + 1 < cells.len() && is_url_span_char(cells[end + 1].ch, cells[end].ch) {
+            while end + 1 < cells.len() && is_url_char(cells[end + 1].ch) {
                 end += 1;
             }
             if clicked_idx >= start && clicked_idx <= end {
@@ -1322,59 +1322,40 @@ fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan
     None
 }
 
-/// Decides whether `ch` extends a URL span whose last character is `prev`.
-///
-/// ASCII is limited to RFC 3986 reserved/unreserved punctuation plus `%` and
-/// `|`. Non-ASCII continues the span only as an IRI segment glued to the URL
-/// body ("wiki/路径"); after any ASCII punctuation other than path/query
-/// joiners it reads as prose ("…knight42),看…", "…knight42(列…"), and
-/// fullwidth punctuation always ends the span.
-fn is_url_span_char(ch: char, prev: char) -> bool {
-    if ch.is_ascii() {
-        return ch.is_ascii_alphanumeric()
-            || matches!(
-                ch,
-                '-' | '.'
-                    | '_'
-                    | '~'
-                    | ':'
-                    | '/'
-                    | '?'
-                    | '#'
-                    | '['
-                    | ']'
-                    | '@'
-                    | '!'
-                    | '$'
-                    | '&'
-                    | '\''
-                    | '('
-                    | ')'
-                    | '*'
-                    | '+'
-                    | ','
-                    | ';'
-                    | '='
-                    | '%'
-                    | '|'
-                    | '{'
-                    | '}'
-            );
-    }
-    if ch.is_whitespace()
+/// Characters a detected URL span may extend over: ASCII alphanumerics plus
+/// RFC 3986 reserved/unreserved punctuation, `%`, `|`, and braces. Everything
+/// else — whitespace and all non-ASCII, including CJK prose glued directly
+/// onto a URL — ends the span; unencoded IRI text is deliberately not linked.
+fn is_url_char(ch: char) -> bool {
+    ch.is_ascii_alphanumeric()
         || matches!(
             ch,
-            '（' | '）' | '：' | '；' | '、' | '。' | '，' | '！' | '？' | '「' | '」' | '…'
+            '-' | '.'
+                | '_'
+                | '~'
+                | ':'
+                | '/'
+                | '?'
+                | '#'
+                | '['
+                | ']'
+                | '@'
+                | '!'
+                | '$'
+                | '&'
+                | '\''
+                | '('
+                | ')'
+                | '*'
+                | '+'
+                | ','
+                | ';'
+                | '='
+                | '%'
+                | '|'
+                | '{'
+                | '}'
         )
-    {
-        return false;
-    }
-    // Non-ASCII continues an IRI only when glued to the URL body: more
-    // non-ASCII, alphanumerics, or path/query joiners. After any other
-    // punctuation ("…knight42),看…", "…knight42(列…") it reads as prose.
-    !prev.is_ascii()
-        || prev.is_ascii_alphanumeric()
-        || matches!(prev, '/' | '-' | '_' | '~' | '%' | '=' | '&' | '+')
 }
 
 fn trim_url_edges(cells: &[TextCell], span: CellSpan) -> Option<CellSpan> {
@@ -2488,7 +2469,7 @@ mod tests {
     #[test]
     fn link_resolution_regions_unicode_punctuation_and_explicit_links() {
         let mut terminal = crate::ghostty::Terminal::new(80, 4, 1024).unwrap();
-        terminal.write("[文档](https://example.com/路径?q=a(b)), next".as_bytes());
+        terminal.write("[文档](https://example.com/p?q=a(b)), next".as_bytes());
         let regions = terminal
             .viewport_link_regions(7, 0, url_byte_range)
             .unwrap();
@@ -2497,7 +2478,7 @@ mod tests {
                 .iter()
                 .map(|r| (r.row, r.start_col, r.end_col))
                 .collect::<Vec<_>>(),
-            vec![(0, 7, 37)]
+            vec![(0, 7, 34)]
         );
         assert!(terminal
             .viewport_link_regions(1, 0, url_byte_range)
@@ -2511,7 +2492,7 @@ mod tests {
                 .iter()
                 .map(|r| (r.row, r.start_col, r.end_col))
                 .collect::<Vec<_>>(),
-            vec![(0, 7, 19), (1, 0, 17)]
+            vec![(0, 7, 19), (1, 0, 14)]
         );
         let mut terminal = crate::ghostty::Terminal::new(80, 4, 1024).unwrap();
         terminal.write(b"file:///tmp/a");
@@ -2546,13 +2527,13 @@ mod tests {
     #[test]
     fn link_resolution_regions_keep_grapheme_byte_offsets() {
         let mut terminal = crate::ghostty::Terminal::new(40, 3, 1024).unwrap();
-        terminal.write("e\u{301}(https://example.com/路e\u{301}),".as_bytes());
+        terminal.write("e\u{301}(https://example.com/x),路".as_bytes());
         let expected = vec![crate::api::schema::PaneLinkRegion {
             row: 0,
             start_col: 2,
-            end_col: 24,
+            end_col: 22,
         }];
-        for col in 2..=24 {
+        for col in 2..=22 {
             assert_eq!(
                 terminal
                     .viewport_link_regions(col, 0, url_byte_range)
@@ -2566,7 +2547,7 @@ mod tests {
             .unwrap()
             .is_empty());
         assert!(terminal
-            .viewport_link_regions(25, 0, url_byte_range)
+            .viewport_link_regions(23, 0, url_byte_range)
             .unwrap()
             .is_empty());
         terminal.resize(21, 1, 0, 0).unwrap();
@@ -2578,7 +2559,7 @@ mod tests {
             vec![crate::api::schema::PaneLinkRegion {
                 row: 0,
                 start_col: 0,
-                end_col: 3
+                end_col: 1
             }]
         );
     }
@@ -2586,7 +2567,7 @@ mod tests {
     #[test]
     fn link_resolution_regions_clip_wraps_and_wide_padding() {
         let mut terminal = crate::ghostty::Terminal::new(21, 3, 1024).unwrap();
-        terminal.write("https://example.com/路径".as_bytes());
+        terminal.write("路径 https://example.com/ab".as_bytes());
         let regions = terminal
             .viewport_link_regions(1, 1, url_byte_range)
             .unwrap();
@@ -2595,7 +2576,7 @@ mod tests {
                 .iter()
                 .map(|r| (r.row, r.start_col, r.end_col))
                 .collect::<Vec<_>>(),
-            vec![(0, 0, 19), (1, 0, 3)]
+            vec![(0, 5, 20), (1, 0, 5)]
         );
         assert!(terminal
             .viewport_link_regions(19, 2, url_byte_range)
@@ -2643,31 +2624,36 @@ mod tests {
     #[test]
     fn link_activation_preserves_unicode_and_click_boundaries_after_resize() {
         let mut terminal = crate::ghostty::Terminal::new(80, 5, 1024 * 1024).unwrap();
-        terminal.write("[文档](https://example.com/路径?q=a(b)), next".as_bytes());
+        terminal.write("[文档](https://example.com/p?q=a(b)), next".as_bytes());
         assert!(
             url_from_link_target(terminal.viewport_link_target(1, 0).unwrap().unwrap()).is_none()
         );
         assert_eq!(
             url_from_link_target(terminal.viewport_link_target(7, 0).unwrap().unwrap()).as_deref(),
-            Some("https://example.com/路径?q=a(b)")
+            Some("https://example.com/p?q=a(b)")
         );
         terminal.resize(20, 5, 0, 0).unwrap();
         assert_eq!(
             url_from_link_target(terminal.viewport_link_target(9, 1).unwrap().unwrap()).as_deref(),
-            Some("https://example.com/路径?q=a(b)")
+            Some("https://example.com/p?q=a(b)")
         );
         assert!(terminal.viewport_link_target(19, 4).unwrap().is_none());
     }
 
     #[test]
     fn link_activation_skips_wide_character_wrap_padding() {
-        let url = "https://example.com/路径";
+        // The trailing 径 does not fit at column 19, so the terminal pads
+        // that cell and wraps the wide character; byte offsets for the URL on
+        // the next row must account for the padding cell.
+        let url = "https://e.com/ab";
         let mut terminal = crate::ghostty::Terminal::new(20, 3, 1024).unwrap();
-        terminal.write(url.as_bytes());
-        for col in 0..4 {
+        terminal.write("路径路径路径路径x径径 https://e.com/ab".as_bytes());
+        for col in 3..=18 {
             let target = terminal.viewport_link_target(col, 1).unwrap().unwrap();
             assert_eq!(url_from_link_target(target).as_deref(), Some(url));
         }
+        let target = terminal.viewport_link_target(0, 1).unwrap().unwrap();
+        assert_eq!(url_from_link_target(target), None);
     }
 
     #[test]
@@ -2743,11 +2729,11 @@ mod tests {
             selected_url("见 https://en.wikipedia.org/wiki/Rust_(lang)后缀", "wiki"),
             Some("https://en.wikipedia.org/wiki/Rust_(lang)")
         );
-        // Unencoded IRI segments glued to the URL body stay part of the link,
-        // but fullwidth punctuation ends it.
+        // Legal URLs are ASCII: any non-ASCII text ends the span, including
+        // unencoded IRI segments.
         assert_eq!(
             selected_url("open https://a.com/wiki/中文 now", "a.com"),
-            Some("https://a.com/wiki/中文")
+            Some("https://a.com/wiki/")
         );
         assert_eq!(
             selected_url("看 https://a.com/x，注意", "a.com"),
