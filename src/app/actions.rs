@@ -1095,14 +1095,85 @@ impl AppState {
 pub(super) fn url_from_link_target(target: crate::ghostty::LinkTarget) -> Option<String> {
     match target {
         crate::ghostty::LinkTarget::Uri(uri) => Some(uri),
-        crate::ghostty::LinkTarget::Text { text, clicked_byte } => {
-            url_at_byte(&text, clicked_byte).map(str::to_owned)
-        }
+        crate::ghostty::LinkTarget::Text { text, clicked_byte } => url_at_byte(&text, clicked_byte)
+            .and_then(normalized_link_url)
+            .map(std::borrow::Cow::into_owned),
     }
 }
 
-pub(crate) fn safe_web_url(url: &str) -> Option<&str> {
-    (url.starts_with("http://") || url.starts_with("https://")).then_some(url)
+/// A URL the client may hand to the platform opener: any explicit
+/// `scheme://` URI. Scheme support is decided by the OS, which reports
+/// failure for schemes nothing handles, so no allowlist is kept here.
+pub(crate) fn openable_url(url: &str) -> Option<&str> {
+    chars_start_with_url_scheme(url.chars()).then_some(url)
+}
+
+/// Validates a detected link token and normalizes it into an openable URL:
+/// explicit `scheme://` URIs pass through, scheme-less `host.tld/path`
+/// tokens get `https://` prepended.
+pub(crate) fn normalized_link_url(text: &str) -> Option<std::borrow::Cow<'_, str>> {
+    if chars_start_with_url_scheme(text.chars()) {
+        return Some(std::borrow::Cow::Borrowed(text));
+    }
+    chars_start_with_linkable_domain(text.chars())
+        .then(|| std::borrow::Cow::Owned(format!("https://{text}")))
+}
+
+fn chars_start_with_url_scheme(mut chars: impl Iterator<Item = char>) -> bool {
+    // RFC 3986 scheme: ALPHA *( ALPHA / DIGIT / "+" / "-" / "." ), then "://"
+    // with at least one non-whitespace character after it.
+    if !chars.next().is_some_and(|ch| ch.is_ascii_alphabetic()) {
+        return false;
+    }
+    let mut ch = chars.next();
+    while ch.is_some_and(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '+' | '-' | '.')) {
+        ch = chars.next();
+    }
+    ch == Some(':')
+        && chars.next() == Some('/')
+        && chars.next() == Some('/')
+        && chars.next().is_some_and(|ch| !ch.is_whitespace())
+}
+
+fn chars_start_with_linkable_domain(mut chars: impl Iterator<Item = char>) -> bool {
+    // Hostname of two or more dot-separated labels followed by an optional
+    // port and a mandatory "/", e.g. "github.com/knight42/kt". The final
+    // label must start with a letter so version-like tokens ("1.2.3/4")
+    // stay plain text.
+    let mut labels = 0usize;
+    let mut ch = chars.next();
+    loop {
+        let label_starts_alphabetic = ch.is_some_and(|ch| ch.is_ascii_alphabetic());
+        let mut label_len = 0usize;
+        while ch.is_some_and(|ch| ch.is_ascii_alphanumeric() || ch == '-') {
+            label_len += 1;
+            ch = chars.next();
+        }
+        if label_len == 0 {
+            return false;
+        }
+        labels += 1;
+        if ch == Some('.') {
+            ch = chars.next();
+            continue;
+        }
+        if labels < 2 || !label_starts_alphabetic {
+            return false;
+        }
+        break;
+    }
+    if ch == Some(':') {
+        ch = chars.next();
+        let mut digits = 0usize;
+        while ch.is_some_and(|ch| ch.is_ascii_digit()) {
+            digits += 1;
+            ch = chars.next();
+        }
+        if digits == 0 {
+            return false;
+        }
+    }
+    ch == Some('/')
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1159,7 +1230,7 @@ pub(super) fn url_byte_range(text: &str, clicked_byte: usize) -> Option<std::ops
     let span = url_span_at_column(&cells, clicked_idx)?;
     let start = byte_index_for_cell(text, span.start);
     let end = byte_index_after_cell(text, span.end);
-    safe_web_url(text.get(start..end)?)?;
+    normalized_link_url(text.get(start..end)?)?;
     Some(start..end)
 }
 
@@ -1226,8 +1297,14 @@ fn byte_index_after_cell(row: &str, cell_idx: usize) -> usize {
 fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan> {
     let mut start = 0;
     while start < cells.len() {
-        if starts_with_chars(&cells[start..], "http://")
-            || starts_with_chars(&cells[start..], "https://")
+        let chars = cells[start..].iter().map(|cell| cell.ch);
+        // Scheme-less domains only count at a token boundary so path segments
+        // like "vendor/example.com/pkg" stay plain text.
+        let at_token_start = start == 0
+            || cells[start - 1].ch.is_whitespace()
+            || is_leading_token_wrapper(cells[start - 1].ch);
+        if chars_start_with_url_scheme(chars.clone())
+            || (at_token_start && chars_start_with_linkable_domain(chars))
         {
             let mut end = start;
             while end + 1 < cells.len() && !cells[end + 1].ch.is_whitespace() {
@@ -1325,13 +1402,6 @@ fn is_escaped(cells: &[TextCell], idx: usize) -> bool {
         cursor -= 1;
     }
     slashes % 2 == 1
-}
-
-fn starts_with_chars(cells: &[TextCell], prefix: &str) -> bool {
-    prefix
-        .chars()
-        .enumerate()
-        .all(|(idx, expected)| cells.get(idx).is_some_and(|cell| cell.ch == expected))
 }
 
 fn is_word_separator(ch: char) -> bool {
@@ -2386,8 +2456,18 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![(0, 7, 19), (1, 0, 17)]
         );
+        let mut terminal = crate::ghostty::Terminal::new(80, 4, 1024).unwrap();
+        terminal.write(b"file:///tmp/a");
+        assert_eq!(
+            terminal
+                .viewport_link_regions(0, 0, url_byte_range)
+                .unwrap()
+                .iter()
+                .map(|r| (r.row, r.start_col, r.end_col))
+                .collect::<Vec<_>>(),
+            vec![(0, 0, 12)]
+        );
         for text in [
-            "file:///tmp/a",
             "javascript:alert(1)",
             "\x1b]8;;https://example.com\x1b\\https://example.com\x1b]8;;\x1b\\",
         ] {
@@ -2534,7 +2614,7 @@ mod tests {
     }
 
     #[test]
-    fn url_at_byte_returns_safe_visible_url_only() {
+    fn url_at_byte_returns_visible_link_token_only() {
         assert_eq!(
             selected_url("see https://example.com/a(b)c.", "example"),
             Some("https://example.com/a(b)c")
@@ -2547,7 +2627,78 @@ mod tests {
             selected_url("[docs](https://example.com/docs)", "docs"),
             None
         );
-        assert_eq!(selected_url("open file:///tmp/report", "file"), None);
+    }
+
+    #[test]
+    fn url_at_byte_accepts_any_explicit_scheme() {
+        assert_eq!(
+            selected_url("sync s3://meshy-assets done", "meshy"),
+            Some("s3://meshy-assets")
+        );
+        assert_eq!(
+            selected_url("open file:///tmp/report", "file"),
+            Some("file:///tmp/report")
+        );
+        // A trimmed-empty remainder after "://" is not a link.
+        assert_eq!(selected_url("weird s3://. end", "s3"), None);
+    }
+
+    #[test]
+    fn url_at_byte_accepts_bare_domains_with_paths() {
+        assert_eq!(
+            selected_url("clone github.com/knight42/kt now", "knight"),
+            Some("github.com/knight42/kt")
+        );
+        assert_eq!(
+            selected_url("(github.com/knight42/kt)", "github"),
+            Some("github.com/knight42/kt")
+        );
+        assert_eq!(
+            selected_url("port example.com:8080/health ok", "health"),
+            Some("example.com:8080/health")
+        );
+        // No slash, version-like tokens, path segments, and scp-like remotes
+        // stay plain text.
+        assert_eq!(selected_url("just example.com here", "example"), None);
+        assert_eq!(selected_url("bump v1.2.3/4 today", "2.3"), None);
+        assert_eq!(selected_url("see vendor/example.com/pkg", "example"), None);
+        assert_eq!(selected_url("src/main.rs", "main"), None);
+        assert_eq!(
+            selected_url("pull git@github.com:knight42/kt.git", "knight"),
+            None
+        );
+    }
+
+    #[test]
+    fn link_activation_prepends_https_to_bare_domains() {
+        let text = "clone github.com/knight42/kt now";
+        let target = crate::ghostty::LinkTarget::Text {
+            text: text.to_string(),
+            clicked_byte: text.find("knight").unwrap(),
+        };
+        assert_eq!(
+            url_from_link_target(target).as_deref(),
+            Some("https://github.com/knight42/kt")
+        );
+        let target = crate::ghostty::LinkTarget::Text {
+            text: "sync s3://meshy-assets done".to_string(),
+            clicked_byte: 5,
+        };
+        assert_eq!(
+            url_from_link_target(target).as_deref(),
+            Some("s3://meshy-assets")
+        );
+    }
+
+    #[test]
+    fn openable_url_requires_explicit_scheme() {
+        assert!(openable_url("https://example.com").is_some());
+        assert!(openable_url("s3://meshy-assets").is_some());
+        assert!(openable_url("vscode-insiders://open?x=1").is_some());
+        assert!(openable_url("github.com/knight42/kt").is_none());
+        assert!(openable_url("s3://").is_none());
+        assert!(openable_url("://nope").is_none());
+        assert!(openable_url("3s://leading-digit").is_none());
     }
 
     #[test]

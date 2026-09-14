@@ -38,8 +38,8 @@ pub(super) fn dispatch_client_shell_actions(
                     force: false,
                 });
             }
-            shell::ClientShellAction::OpenSafeWebUrl(url) => {
-                if crate::app::actions::safe_web_url(&url).is_some() {
+            shell::ClientShellAction::OpenUrl(url) => {
+                if crate::app::actions::openable_url(&url).is_some() {
                     match crate::platform::open_url(&url) {
                         Ok(Some(child)) => detached_process_children.push(child),
                         Ok(None) => {}
