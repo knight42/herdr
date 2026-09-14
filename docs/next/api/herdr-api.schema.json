@@ -2774,6 +2774,31 @@
           },
           "type": "object"
         },
+        "PaneLogicalLineReadParams": {
+          "properties": {
+            "content_revision": {
+              "format": "uint64",
+              "minimum": 0,
+              "type": [
+                "integer",
+                "null"
+              ]
+            },
+            "pane_id": {
+              "type": "string"
+            },
+            "row": {
+              "format": "uint32",
+              "minimum": 0,
+              "type": "integer"
+            }
+          },
+          "required": [
+            "pane_id",
+            "row"
+          ],
+          "type": "object"
+        },
         "PaneMoveDestination": {
           "oneOf": [
             {
@@ -5731,6 +5756,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/PaneSelectionReadParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "pane.logical_line.read",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/PaneLogicalLineReadParams"
             }
           },
           "required": [
@@ -9882,6 +9923,34 @@
                 "type",
                 "pane_id",
                 "text"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "end_row": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "pane_id": {
+                  "type": "string"
+                },
+                "start_row": {
+                  "format": "uint32",
+                  "minimum": 0,
+                  "type": "integer"
+                },
+                "type": {
+                  "const": "pane_logical_line",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "pane_id",
+                "start_row",
+                "end_row"
               ],
               "type": "object"
             },

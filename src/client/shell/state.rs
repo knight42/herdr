@@ -699,6 +699,11 @@ pub(super) enum PendingEndpointKind {
         absolute_row: u32,
         generation: u64,
     },
+    LineSelection {
+        pane_id: String,
+        end_col: u16,
+        generation: u64,
+    },
     PaneLinkResolve {
         target: super::link_hover::LinkHoverTarget,
     },
@@ -809,10 +814,13 @@ pub(super) struct ClientPaneClick {
     pub(super) viewport_row: u16,
     pub(super) col: u16,
     pub(super) at: std::time::Instant,
+    /// Position in the multi-click chain: 1 for a single click, 2 for the
+    /// double click that selected a word.
+    pub(super) count: u8,
 }
 
 impl ClientPaneClick {
-    pub(super) fn is_double_click_for(&self, next: &Self) -> bool {
+    pub(super) fn chains_with(&self, next: &Self) -> bool {
         self.pane_id == next.pane_id
             && next.at.duration_since(self.at) <= std::time::Duration::from_millis(350)
             && self.viewport_row.abs_diff(next.viewport_row) <= 1
@@ -947,6 +955,7 @@ pub(crate) struct ClientShellState {
     pub(super) selection_highlight_clear_deadline: Option<std::time::Instant>,
     pub(super) word_selection_gesture: Option<ClientWordSelection>,
     pub(super) word_selection_generation: u64,
+    pub(super) pending_line_selection: Option<u64>,
     pub(super) copy_mode: Option<ClientCopyModeState>,
     pub(super) copy_session_generation: u64,
     pub(super) copy_operation_in_flight: bool,
@@ -1107,6 +1116,7 @@ impl ClientShellState {
             selection_highlight_clear_deadline: None,
             word_selection_gesture: None,
             word_selection_generation: 0,
+            pending_line_selection: None,
             copy_mode: None,
             copy_session_generation: 0,
             copy_operation_in_flight: false,
@@ -1298,6 +1308,7 @@ impl ClientShellState {
         self.selection_autoscroll_deadline = None;
         self.selection_highlight_clear_deadline = None;
         self.word_selection_gesture = None;
+        self.pending_line_selection = None;
         self.copy_mode = None;
         if self.mode == ClientShellMode::Copy {
             self.mode = ClientShellMode::Terminal;
@@ -1466,6 +1477,7 @@ impl ClientShellState {
             self.selection_autoscroll_deadline = None;
             self.selection_highlight_clear_deadline = None;
             self.word_selection_gesture = None;
+            self.pending_line_selection = None;
             self.last_pane_click = None;
         }
         if let Some(copy_pane_id) = self
@@ -1691,6 +1703,7 @@ impl ClientShellState {
             self.selection_autoscroll_deadline = None;
             self.selection_highlight_clear_deadline = None;
             self.word_selection_gesture = None;
+            self.pending_line_selection = None;
             self.copy_mode = None;
             self.reset_copy_pipeline();
             self.chrome_drag = None;

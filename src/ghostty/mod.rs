@@ -1226,6 +1226,27 @@ impl Terminal {
         self.screen_text_rows_range(0, usize::MAX)
     }
 
+    /// Screen-buffer row range of the logical line containing `row`: walks
+    /// wrap-continuation rows up and soft-wrapped rows down to the hard
+    /// line breaks on both sides.
+    pub(crate) fn logical_line_extent(&self, row: u32) -> Result<(u32, u32), Error> {
+        let total_rows = self.total_rows()?;
+        let last_row = u32::try_from(total_rows.saturating_sub(1)).unwrap_or(u32::MAX);
+        let row = row.min(last_row);
+        let wrap_state = |y: u32| -> Result<(bool, bool), Error> {
+            grid_ref_wrap_state(&self.grid_ref(ghostty_screen_point(0, y))?)
+        };
+        let mut start = row;
+        while start > 0 && wrap_state(start)?.1 {
+            start -= 1;
+        }
+        let mut end = row;
+        while end < last_row && wrap_state(end)?.0 {
+            end += 1;
+        }
+        Ok((start, end))
+    }
+
     pub(crate) fn screen_text_rows_range(
         &self,
         start_row: usize,

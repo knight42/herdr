@@ -135,6 +135,7 @@ impl ClientShellState {
             return true;
         }
         self.word_selection_gesture = None;
+        self.pending_line_selection = None;
         if self.copy_or_terminal_mode() != ClientShellMode::Copy && self.selection.take().is_some()
         {
             self.stop_selection_autoscroll();
@@ -530,6 +531,7 @@ impl ClientShellState {
             return None;
         }
         self.word_selection_gesture = None;
+        self.pending_line_selection = None;
         if self.mode != ClientShellMode::Copy
             && self.copy_or_terminal_mode() != ClientShellMode::Copy
             && !self.config.copy_on_select

@@ -166,6 +166,11 @@ pub enum ResponseResult {
         pane_id: String,
         text: String,
     },
+    PaneLogicalLine {
+        pane_id: String,
+        start_row: u32,
+        end_row: u32,
+    },
     PaneCopyMotion {
         pane_id: String,
         cursor: PaneTextPoint,
