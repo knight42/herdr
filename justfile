@@ -88,6 +88,12 @@ build:
 build:
     python scripts/package_windows_conpty.py build-local
 
+# Build release binary stamped with the current commit, e.g. 0.9.0-dev.20260913-34e74fb9
+[unix]
+build-dev:
+    HERDR_BUILD_CHANNEL=dev HERDR_BUILD_ID="$(date +%Y%m%d)-$(git rev-parse --short HEAD)" cargo build --release --locked
+    @"${CARGO_TARGET_DIR:-target}/release/herdr" --version
+
 # Non-gating full-render scaling profile for background workspaces and active panes
 bench-render-scale:
     cargo test --release --locked --bin herdr render_scale_profile -- --ignored --nocapture --test-threads=1
