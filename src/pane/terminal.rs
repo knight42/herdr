@@ -526,6 +526,10 @@ impl PaneTerminal {
         self.ghostty.extract_selection(selection)
     }
 
+    pub fn logical_line_bounds(&self, row: u32) -> Option<(u32, u32, u16)> {
+        self.ghostty.logical_line_bounds(row)
+    }
+
     pub fn render(&self, frame: &mut Frame, area: Rect, show_cursor: bool) {
         self.ghostty.render(frame, area, show_cursor);
     }
@@ -2251,6 +2255,14 @@ impl GhosttyPaneTerminal {
             .lock()
             .ok()
             .and_then(|mut core| ghostty_extract_selection(&mut core, selection).ok())
+    }
+
+    pub fn logical_line_bounds(&self, row: u32) -> Option<(u32, u32, u16)> {
+        self.core
+            .lock()
+            .ok()
+            .and_then(|core| core.terminal.logical_line_bounds(row).ok())
+            .flatten()
     }
 
     pub fn visible_hyperlinks(&self, area: Rect) -> Vec<((u16, u16), String, String)> {

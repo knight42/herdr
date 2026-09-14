@@ -3133,6 +3133,12 @@ impl PaneRuntime {
         result
     }
 
+    pub fn logical_line_bounds(&self, row: u32) -> Option<(u32, u32, u16)> {
+        let result = self.terminal.logical_line_bounds(row);
+        self.compression.wake();
+        result
+    }
+
     pub fn render(&self, frame: &mut Frame, area: Rect, show_cursor: bool) {
         self.terminal.render(frame, area, show_cursor);
     }

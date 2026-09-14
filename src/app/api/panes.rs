@@ -6,8 +6,8 @@ use crate::api::schema::{
     PaneDirection, PaneEdgesParams, PaneEdgesResult, PaneFocusDirectionParams,
     PaneFocusDirectionReason, PaneFocusDirectionResult, PaneInfo, PaneInputSetParams,
     PaneLayoutPane, PaneLayoutParams, PaneLayoutRect, PaneLayoutSnapshot, PaneLayoutSplit,
-    PaneListParams, PaneMoveDestination, PaneMoveParams, PaneMoveReason, PaneMoveResult,
-    PaneNeighborParams, PaneNeighborResult, PaneProcessInfo, PaneProcessInfoParams,
+    PaneListParams, PaneLogicalLineReadParams, PaneMoveDestination, PaneMoveParams, PaneMoveReason,
+    PaneMoveResult, PaneNeighborParams, PaneNeighborResult, PaneProcessInfo, PaneProcessInfoParams,
     PaneProcessInfoProcess, PaneReadParams, PaneReadResult, PaneReleaseAgentParams,
     PaneRenameParams, PaneReportAgentParams, PaneReportAgentSessionParams,
     PaneReportMetadataParams, PaneResizeParams, PaneResizeReason, PaneResizeResult,
@@ -264,6 +264,51 @@ impl App {
             ),
             Err((code, message)) => encode_error(id, code, message),
         }
+    }
+
+    pub(super) fn handle_pane_logical_line_read(
+        &mut self,
+        id: String,
+        params: PaneLogicalLineReadParams,
+    ) -> String {
+        let Some((ws_idx, pane_id)) = self.parse_pane_id(&params.pane_id) else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let Some(runtime) =
+            self.state
+                .runtime_for_pane_in_workspace(&self.terminal_runtimes, ws_idx, pane_id)
+        else {
+            return pane_not_found(id, &params.pane_id);
+        };
+        let before = runtime.content_seq();
+        if params
+            .content_revision
+            .is_some_and(|revision| revision != before || !before.is_multiple_of(2))
+        {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        let range = runtime
+            .logical_line_bounds(params.row)
+            .map(|(start_row, end_row, end_col)| PaneTextRange {
+                start: PaneTextPoint {
+                    row: start_row,
+                    col: 0,
+                },
+                end: PaneTextPoint {
+                    row: end_row,
+                    col: end_col,
+                },
+            });
+        if params.content_revision.is_some() && runtime.content_seq() != before {
+            return encode_error(id, "stale_content", "pane content changed");
+        }
+        encode_success(
+            id,
+            ResponseResult::PaneLogicalLine {
+                pane_id: params.pane_id,
+                range,
+            },
+        )
     }
 
     pub(super) fn handle_pane_copy_motion(
@@ -2447,6 +2492,110 @@ mod tests {
                 text: "hello".into(),
             }
         );
+    }
+
+    #[tokio::test]
+    async fn api_pane_logical_line_read_reports_text_bounds() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        app.state.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+                10,
+                8,
+                4000,
+                "0123456789ABCDE\r\n  in\r\nabc 日本語\r\n\r\nsp   ".as_bytes(),
+            ),
+        );
+
+        let range_at = |app: &mut App, row: u32| {
+            let response = app.handle_pane_logical_line_read(
+                format!("req{row}"),
+                PaneLogicalLineReadParams {
+                    pane_id: public_pane_id.clone(),
+                    row,
+                    content_revision: None,
+                },
+            );
+            let success: SuccessResponse = serde_json::from_str(&response).unwrap();
+            match success.result {
+                ResponseResult::PaneLogicalLine { pane_id, range } => {
+                    assert_eq!(pane_id, public_pane_id);
+                    range
+                }
+                other => panic!("expected logical line result, got {other:?}"),
+            }
+        };
+
+        let point = |row, col| PaneTextPoint { row, col };
+        // A click on either visual row of the soft-wrapped line selects both rows.
+        assert_eq!(
+            range_at(&mut app, 1),
+            Some(PaneTextRange {
+                start: point(0, 0),
+                end: point(1, 4),
+            })
+        );
+        // Leading indentation stays part of the line.
+        assert_eq!(
+            range_at(&mut app, 2),
+            Some(PaneTextRange {
+                start: point(2, 0),
+                end: point(2, 3),
+            })
+        );
+        // Wide characters occupy two display cells; the range ends on the tail cell.
+        assert_eq!(
+            range_at(&mut app, 3),
+            Some(PaneTextRange {
+                start: point(3, 0),
+                end: point(3, 9),
+            })
+        );
+        // Blank rows select nothing.
+        assert_eq!(range_at(&mut app, 4), None);
+        // Trailing whitespace stays outside the selection.
+        assert_eq!(
+            range_at(&mut app, 5),
+            Some(PaneTextRange {
+                start: point(5, 0),
+                end: point(5, 1),
+            })
+        );
+    }
+
+    #[tokio::test]
+    async fn api_pane_logical_line_read_rejects_stale_content() {
+        let (mut app, public_pane_id) = app_with_test_workspace();
+        let pane_id = app.state.workspaces[0].tabs[0].root_pane;
+        app.state.insert_test_runtime(
+            pane_id,
+            crate::terminal::TerminalRuntime::test_with_scrollback_bytes(
+                20,
+                5,
+                1000,
+                b"hello world",
+            ),
+        );
+
+        let runtime = app
+            .state
+            .runtime_for_pane_in_workspace(&app.terminal_runtimes, 0, pane_id)
+            .unwrap();
+        let revision = runtime.content_seq();
+        runtime.test_process_pty_bytes(b"\r\nmore output");
+        assert_ne!(runtime.content_seq(), revision);
+
+        let response = app.handle_pane_logical_line_read(
+            "req".into(),
+            PaneLogicalLineReadParams {
+                pane_id: public_pane_id,
+                row: 0,
+                content_revision: Some(revision),
+            },
+        );
+        let error: ErrorResponse = serde_json::from_str(&response).unwrap();
+        assert_eq!(error.error.code, "stale_content");
     }
 
     #[tokio::test]

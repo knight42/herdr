@@ -293,6 +293,44 @@ impl ClientShellState {
         );
     }
 
+    pub(super) fn request_line_selection(
+        &mut self,
+        hit: &PaneHit,
+        viewport_row: u16,
+        outcome: &mut ClientShellInput,
+    ) {
+        let absolute_row = crate::selection::absolute_row_for_viewport(viewport_row, hit.scroll);
+        let content_revision = self
+            .pane_surface
+            .as_ref()
+            .and_then(|surface| {
+                surface
+                    .panes
+                    .iter()
+                    .find(|pane| pane.pane_id == hit.pane_id)
+            })
+            .map(|pane| pane.content_revision);
+        self.line_selection_generation = self.line_selection_generation.saturating_add(1);
+        let generation = self.line_selection_generation;
+        self.pending_line_selection = Some(generation);
+        if !self.push_endpoint_method_with_kind(
+            crate::api::schema::Method::PaneLogicalLineRead(
+                crate::api::schema::PaneLogicalLineReadParams {
+                    pane_id: hit.pane_id.clone(),
+                    row: absolute_row,
+                    content_revision,
+                },
+            ),
+            PendingEndpointKind::LineSelection {
+                pane_id: hit.pane_id.clone(),
+                generation,
+            },
+            outcome,
+        ) {
+            self.pending_line_selection = None;
+        }
+    }
+
     pub(super) fn push_endpoint_method(
         &mut self,
         method: crate::api::schema::Method,
@@ -623,6 +661,58 @@ impl ClientShellState {
                 generation,
             } => {
                 return self.complete_word_selection_row(pane_id, absolute_row, generation, result);
+            }
+            PendingEndpointKind::LineSelection {
+                pane_id,
+                generation,
+            } => {
+                if self.pending_line_selection != Some(generation)
+                    || self.snapshot.as_deref().is_none_or(|snapshot| {
+                        !snapshot.panes.iter().any(|pane| pane.pane_id == pane_id)
+                    })
+                {
+                    return (false, Vec::new());
+                }
+                self.pending_line_selection = None;
+                let range = match result {
+                    Ok(crate::api::schema::ResponseResult::PaneLogicalLine {
+                        pane_id: returned_pane_id,
+                        range,
+                    }) if returned_pane_id == pane_id => range,
+                    Ok(crate::api::schema::ResponseResult::PaneLogicalLine { .. }) => {
+                        return (false, Vec::new())
+                    }
+                    Ok(_) => {
+                        self.set_endpoint_error(
+                            "endpoint returned an unexpected line-selection result",
+                        );
+                        return (true, Vec::new());
+                    }
+                    Err(_) => return (true, Vec::new()),
+                };
+                let Some(range) = range else {
+                    self.selection = None;
+                    return (true, Vec::new());
+                };
+                let mut selection = crate::selection::Selection::absolute_range(
+                    pane_id,
+                    (range.start.row, range.start.col),
+                    (range.end.row, range.end.col),
+                );
+                if !selection.finish() {
+                    return (false, Vec::new());
+                }
+                self.selection = Some(selection);
+                self.selection_autoscroll = None;
+                self.selection_autoscroll_deadline = None;
+                if !self.config.copy_on_select {
+                    return (true, Vec::new());
+                }
+                self.selection_highlight_clear_deadline =
+                    Some(std::time::Instant::now() + std::time::Duration::from_millis(500));
+                let mut outcome = ClientShellInput::default();
+                self.request_selection_copy(&mut outcome, false);
+                return (true, outcome.actions);
             }
             PendingEndpointKind::PaneLinkActivate {
                 pane_id,

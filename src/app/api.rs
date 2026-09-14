@@ -1107,6 +1107,9 @@ impl App {
             Method::PaneSelectionRead(params) => {
                 return self.handle_pane_selection_read(request.id, params);
             }
+            Method::PaneLogicalLineRead(params) => {
+                return self.handle_pane_logical_line_read(request.id, params);
+            }
             Method::PaneCopyMotion(params) => {
                 return self.handle_pane_copy_motion(request.id, params);
             }

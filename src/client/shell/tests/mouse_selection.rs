@@ -665,6 +665,155 @@ fn double_click_drag_autoscroll_keeps_absolute_word_anchor() {
 }
 
 #[test]
+fn pane_click_chain_counting() {
+    let base = std::time::Instant::now();
+    let click = |pane_id: &str, viewport_row: u16, col: u16, at, count| ClientPaneClick {
+        pane_id: pane_id.into(),
+        viewport_row,
+        col,
+        at,
+        count,
+    };
+    let first = click("pane_1", 4, 8, base, 1);
+    let second = click(
+        "pane_1",
+        4,
+        9,
+        base + std::time::Duration::from_millis(200),
+        1,
+    );
+    assert_eq!(second.count_after(Some(&first)), 2);
+    let third = click(
+        "pane_1",
+        5,
+        9,
+        second.at + std::time::Duration::from_millis(200),
+        1,
+    );
+    assert_eq!(
+        third.count_after(Some(&click("pane_1", 4, 9, second.at, 2))),
+        3
+    );
+    // The chain restarts without a previous click, across panes, after the
+    // 350ms window, and past one cell of drift.
+    assert_eq!(second.count_after(None), 1);
+    assert_eq!(second.count_after(Some(&click("pane_2", 4, 9, base, 1))), 1);
+    assert_eq!(
+        click(
+            "pane_1",
+            4,
+            8,
+            base + std::time::Duration::from_millis(400),
+            1
+        )
+        .count_after(Some(&first)),
+        1
+    );
+    assert_eq!(
+        second.count_after(Some(&click("pane_1", 4, 11, base, 1))),
+        1
+    );
+}
+
+#[test]
+fn client_triple_click_selects_and_copies_logical_line() {
+    let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
+    state.set_snapshot(Box::new(snapshot()));
+    state.set_pane_surface(surface());
+    state.compose(106, 20).expect("composed frame");
+    let pane = state.hits.panes[0].clone();
+    let click = || {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Down(MouseButton::Left),
+            column: pane.inner_rect.x + 1,
+            row: pane.inner_rect.y,
+            modifiers: KeyModifiers::empty(),
+        })
+    };
+    let release = || {
+        RawInputEvent::Mouse(crossterm::event::MouseEvent {
+            kind: MouseEventKind::Up(MouseButton::Left),
+            column: pane.inner_rect.x + 1,
+            row: pane.inner_rect.y,
+            modifiers: KeyModifiers::empty(),
+        })
+    };
+
+    state.handle_raw_events(vec![click()]);
+    state.handle_raw_events(vec![release()]);
+    let second = state.handle_raw_events(vec![click()]);
+    assert!(
+        second.actions.iter().any(|action| matches!(
+            action,
+            ClientShellAction::Endpoint { request, .. }
+                if matches!(request.method, crate::api::schema::Method::PaneSelectionRead(_))
+        )),
+        "double click still requests the word-row read"
+    );
+    state.handle_raw_events(vec![release()]);
+    let third = state.handle_raw_events(vec![click()]);
+    let ClientShellAction::Endpoint { request, .. } = third
+        .actions
+        .iter()
+        .find(|action| {
+            matches!(
+                action,
+                ClientShellAction::Endpoint { request, .. }
+                    if matches!(request.method, crate::api::schema::Method::PaneLogicalLineRead(_))
+            )
+        })
+        .expect("logical-line read")
+    else {
+        unreachable!()
+    };
+    let line_request_id = request.id.clone();
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::PaneLogicalLineRead(params)
+            if params.pane_id == "pane_1" && params.row == 0
+    ));
+
+    let (repaint, actions) = state.handle_endpoint_result(
+        "boot-1",
+        &line_request_id,
+        Ok(crate::api::schema::ResponseResult::PaneLogicalLine {
+            pane_id: "pane_1".into(),
+            range: Some(crate::api::schema::PaneTextRange {
+                start: crate::api::schema::PaneTextPoint { row: 0, col: 0 },
+                end: crate::api::schema::PaneTextPoint { row: 1, col: 10 },
+            }),
+        }),
+    );
+    assert!(repaint);
+    assert!(state
+        .selection
+        .as_ref()
+        .is_some_and(crate::selection::Selection::is_finalized));
+    let [ClientShellAction::Endpoint { request, .. }] = &actions[..] else {
+        panic!("auto-copy should read the selected line");
+    };
+    let copy_request_id = request.id.clone();
+    assert!(matches!(
+        &request.method,
+        crate::api::schema::Method::PaneSelectionRead(params)
+            if params.anchor == crate::api::schema::PaneTextPoint { row: 0, col: 0 }
+                && params.cursor == crate::api::schema::PaneTextPoint { row: 1, col: 10 }
+    ));
+    let (_, actions) = state.handle_endpoint_result(
+        "boot-1",
+        &copy_request_id,
+        Ok(crate::api::schema::ResponseResult::PaneSelection {
+            pane_id: "pane_1".into(),
+            text: "LIVE data that wrapped".into(),
+        }),
+    );
+    assert!(matches!(
+        &actions[..],
+        [ClientShellAction::ClipboardWrite(bytes)] if bytes == b"LIVE data that wrapped"
+    ));
+}
+
+#[test]
 fn pane_content_updates_preserve_active_selection_only_when_selected_cells_stay_stable() {
     let mut state = ClientShellState::new(ClientShellConfig::from_config(&Config::default()));
     state.set_snapshot(Box::new(snapshot()));

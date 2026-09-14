@@ -1226,6 +1226,64 @@ impl Terminal {
         self.screen_text_rows_range(0, usize::MAX)
     }
 
+    /// Screen-buffer bounds of the logical line containing `row`: walks
+    /// wrap-continuation rows up and soft-wrapped rows down to the hard
+    /// line breaks on both sides, then ends the range at the last text
+    /// cell so trailing whitespace stays outside the selection. `Ok(None)`
+    /// means the logical line holds no text.
+    pub(crate) fn logical_line_bounds(&self, row: u32) -> Result<Option<(u32, u32, u16)>, Error> {
+        let total_rows = self.total_rows()?;
+        let last_row = u32::try_from(total_rows.saturating_sub(1)).unwrap_or(u32::MAX);
+        let row = row.min(last_row);
+        let wrap_state = |y: u32| -> Result<(bool, bool), Error> {
+            grid_ref_wrap_state(&self.grid_ref(ghostty_screen_point(0, y))?)
+        };
+        let mut start = row;
+        while start > 0 && wrap_state(start)?.1 {
+            start -= 1;
+        }
+        let mut end = row;
+        while end < last_row && wrap_state(end)?.0 {
+            end += 1;
+        }
+        let cols = self.cols()?;
+        let mut text_row = end;
+        loop {
+            if let Some(end_col) = self.last_text_col(text_row, cols)? {
+                return Ok(Some((start, text_row, end_col)));
+            }
+            if text_row == start {
+                return Ok(None);
+            }
+            text_row -= 1;
+        }
+    }
+
+    /// Column of the final screen cell of the last text grapheme in the row;
+    /// a wide character ends on its spacer-tail cell. `Ok(None)` for a row of
+    /// only whitespace, empty cells, and Kitty image placeholders.
+    fn last_text_col(&self, y: u32, cols: u16) -> Result<Option<u16>, Error> {
+        let mut last = None;
+        for x in 0..cols {
+            let (wide, graphemes) = self.screen_cell(x, y)?;
+            if wide == CellWide::SpacerTail
+                || graphemes.first().copied() == Some(KITTY_UNICODE_PLACEHOLDER)
+            {
+                continue;
+            }
+            let has_text = graphemes
+                .iter()
+                .any(|&cp| char::from_u32(cp).is_some_and(|ch| !ch.is_whitespace()));
+            if has_text {
+                last = Some(match wide {
+                    CellWide::Wide => x.saturating_add(1).min(cols.saturating_sub(1)),
+                    _ => x,
+                });
+            }
+        }
+        Ok(last)
+    }
+
     pub(crate) fn screen_text_rows_range(
         &self,
         start_row: usize,

@@ -1886,7 +1886,7 @@ impl ClientShellState {
                 }
                 self.stop_selection_autoscroll();
                 self.selection_highlight_clear_deadline = None;
-                self.word_selection_gesture = None;
+                self.cancel_click_selection_gestures();
                 let previous_pane_click = self.last_pane_click.take();
                 self.workspace_press = None;
                 self.tab_press = None;
@@ -2193,33 +2193,37 @@ impl ClientShellState {
                             last_event: mouse,
                         });
                     } else if super::contains(hit.inner_rect, point) {
-                        let click = ClientPaneClick {
+                        let mut click = ClientPaneClick {
                             pane_id: hit.pane_id.clone(),
                             viewport_row: mouse.row.saturating_sub(hit.inner_rect.y),
                             col: mouse.column.saturating_sub(hit.inner_rect.x),
                             at: std::time::Instant::now(),
+                            count: 1,
                         };
-                        if mouse.modifiers.is_empty()
-                            && previous_pane_click
-                                .as_ref()
-                                .is_some_and(|previous| previous.is_double_click_for(&click))
-                        {
-                            self.request_word_selection(
-                                &hit,
-                                click.viewport_row,
-                                click.col,
-                                outcome,
-                            );
-                        } else {
-                            if mouse.modifiers.is_empty() {
+                        if mouse.modifiers.is_empty() {
+                            click.count = click.count_after(previous_pane_click.as_ref());
+                        }
+                        match click.count {
+                            2 => {
+                                let viewport_row = click.viewport_row;
+                                let col = click.col;
                                 self.last_pane_click = Some(click);
+                                self.request_word_selection(&hit, viewport_row, col, outcome);
                             }
-                            self.selection = Some(crate::selection::Selection::anchor(
-                                hit.pane_id.clone(),
-                                mouse.row.saturating_sub(hit.inner_rect.y),
-                                mouse.column.saturating_sub(hit.inner_rect.x),
-                                hit.scroll,
-                            ));
+                            3 => {
+                                self.request_line_selection(&hit, click.viewport_row, outcome);
+                            }
+                            _ => {
+                                if mouse.modifiers.is_empty() {
+                                    self.last_pane_click = Some(click);
+                                }
+                                self.selection = Some(crate::selection::Selection::anchor(
+                                    hit.pane_id.clone(),
+                                    mouse.row.saturating_sub(hit.inner_rect.y),
+                                    mouse.column.saturating_sub(hit.inner_rect.x),
+                                    hit.scroll,
+                                ));
+                            }
                         }
                     }
                     self.push_endpoint_method(
