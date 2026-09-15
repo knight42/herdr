@@ -1326,6 +1326,9 @@ fn url_span_at_column(cells: &[TextCell], clicked_idx: usize) -> Option<CellSpan
 /// RFC 3986 reserved/unreserved punctuation, `%`, `|`, and braces. Everything
 /// else — whitespace and all non-ASCII, including CJK prose glued directly
 /// onto a URL — ends the span; unencoded IRI text is deliberately not linked.
+/// `,` is an RFC 3986 sub-delim but ends the span too: in terminal output a
+/// comma is almost always prose ("…/pull/6045,CI"), and literal commas in
+/// URLs are rare enough to sacrifice.
 fn is_url_char(ch: char) -> bool {
     ch.is_ascii_alphanumeric()
         || matches!(
@@ -1348,7 +1351,6 @@ fn is_url_char(ch: char) -> bool {
                 | ')'
                 | '*'
                 | '+'
-                | ','
                 | ';'
                 | '='
                 | '%'
@@ -1372,7 +1374,7 @@ fn trim_url_edges(cells: &[TextCell], span: CellSpan) -> Option<CellSpan> {
 
 fn should_trim_trailing_url_cell(cells: &[TextCell], start: usize, end: usize) -> bool {
     match cells[end].ch {
-        '"' | '\'' | '`' | '.' | ',' | ';' | ':' | '!' | '?' => true,
+        '"' | '\'' | '`' | '.' | ';' | ':' | '!' | '?' => true,
         // A trailing opener is always dangling prose punctuation ("url(列").
         '(' | '[' | '{' => true,
         ')' => !trailing_url_closer_is_balanced(cells, start, end, '(', ')'),
@@ -2322,9 +2324,15 @@ mod tests {
                 "https://example.com/a-b_c?q=x@y",
             ),
             (
-                "open \"https://example.com/a,b;c?q=x\";",
+                "open \"https://example.com/a;b?q=x\";",
                 "example.com",
-                "https://example.com/a,b;c?q=x",
+                "https://example.com/a;b?q=x",
+            ),
+            // A comma ends the URL like it ends a file path ("actions.rs,then").
+            (
+                "open https://example.com/a,b?q=x now",
+                "example.com",
+                "https://example.com/a",
             ),
             (
                 "see https://en.wikipedia.org/wiki/Foo_(bar_(baz)),",
@@ -2723,6 +2731,14 @@ mod tests {
         assert_eq!(
             selected_url("克隆 github.com/knight42/kt,好的", "knight"),
             Some("github.com/knight42/kt")
+        );
+        // A comma ends the span even when URL characters follow it.
+        assert_eq!(
+            selected_url(
+                "看 https://github.com/knight42/herdr/pull/6045,CI 挂了",
+                "pull"
+            ),
+            Some("https://github.com/knight42/herdr/pull/6045")
         );
         // Balanced closing parens still belong to the URL.
         assert_eq!(
