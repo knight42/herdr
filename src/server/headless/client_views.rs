@@ -234,6 +234,7 @@ impl HeadlessServer {
                 | Method::PaneSplit(_)
                 | Method::TabClose(_)
                 | Method::TabCreate(_)
+                | Method::TabTransfer(_)
                 | Method::WorkspaceClose(_)
                 | Method::WorkspaceCreate(_)
                 | Method::WorktreeCreate(_)
@@ -259,6 +260,7 @@ impl HeadlessServer {
                 | Method::PaneInputSet(_)
                 | Method::PaneLinkActivate(_)
                 | Method::PaneLinkResolve(_)
+                | Method::PaneMove(_)
                 | Method::PaneRename(_)
                 | Method::PaneResize(_)
                 | Method::PaneScroll(_)
@@ -271,6 +273,7 @@ impl HeadlessServer {
                 | Method::TabFocus(_)
                 | Method::TabMove(_)
                 | Method::TabRename(_)
+                | Method::TabTransfer(_)
                 | Method::WorkspaceClose(_)
                 | Method::WorkspaceCreate(_)
                 | Method::WorkspaceFocus(_)
@@ -302,6 +305,7 @@ impl HeadlessServer {
                 | Method::TabClose(_)
                 | Method::TabCreate(_)
                 | Method::TabFocus(_)
+                | Method::TabTransfer(_)
                 | Method::WorkspaceClose(_)
                 | Method::WorkspaceCreate(_)
                 | Method::WorkspaceFocus(_)
@@ -852,6 +856,7 @@ impl HeadlessServer {
         let create_focus_requested = match &msg.request.method {
             api::schema::Method::WorkspaceCreate(params) => params.focus,
             api::schema::Method::TabCreate(params) => params.focus,
+            api::schema::Method::TabTransfer(params) => params.focus,
             _ => false,
         };
         let inspect_pane_move = matches!(

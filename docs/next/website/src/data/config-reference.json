@@ -680,6 +680,18 @@
           "description": "Move the active tab one position toward the back. Unset by default."
         },
         {
+          "key": "keys.move_tab_to_workspace",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Pick a workspace to move the active tab into. Unset by default."
+        },
+        {
+          "key": "keys.move_pane_to_tab",
+          "type": "keybinding",
+          "default": "unset",
+          "description": "Pick a tab to move the focused pane into. Unset by default."
+        },
+        {
           "key": "keys.switch_tab",
           "type": "keybinding",
           "default": "\"prefix+1..9\"",

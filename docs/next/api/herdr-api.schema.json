@@ -4382,6 +4382,64 @@
           ],
           "type": "object"
         },
+        "TabTransferDestination": {
+          "oneOf": [
+            {
+              "properties": {
+                "type": {
+                  "const": "workspace",
+                  "type": "string"
+                },
+                "workspace_id": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type",
+                "workspace_id"
+              ],
+              "type": "object"
+            },
+            {
+              "properties": {
+                "label": {
+                  "type": [
+                    "string",
+                    "null"
+                  ]
+                },
+                "type": {
+                  "const": "new_workspace",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "type"
+              ],
+              "type": "object"
+            }
+          ]
+        },
+        "TabTransferParams": {
+          "description": "Moves a whole tab, with its layout and live panes, into another workspace.",
+          "properties": {
+            "destination": {
+              "$ref": "#/schemas/request/$defs/TabTransferDestination"
+            },
+            "focus": {
+              "default": false,
+              "type": "boolean"
+            },
+            "tab_id": {
+              "type": "string"
+            }
+          },
+          "required": [
+            "tab_id",
+            "destination"
+          ],
+          "type": "object"
+        },
         "ToastHerdrPosition": {
           "enum": [
             "top-left",
@@ -5242,6 +5300,22 @@
             },
             "params": {
               "$ref": "#/schemas/request/$defs/TabMoveParams"
+            }
+          },
+          "required": [
+            "method",
+            "params"
+          ],
+          "type": "object"
+        },
+        {
+          "properties": {
+            "method": {
+              "const": "tab.transfer",
+              "type": "string"
+            },
+            "params": {
+              "$ref": "#/schemas/request/$defs/TabTransferParams"
             }
           },
           "required": [

@@ -663,6 +663,29 @@ impl AppState {
         }
     }
 
+    /// Drops a workspace whose last pane or tab moved elsewhere. Nothing in it
+    /// is shut down: its runtimes now belong to the destination.
+    pub(crate) fn remove_workspace_emptied_by_move(&mut self, ws_idx: usize) {
+        self.workspaces.remove(ws_idx);
+        if self.workspaces.is_empty() {
+            self.active = None;
+            self.selected = 0;
+            return;
+        }
+        if let Some(active) = self.active {
+            if active == ws_idx {
+                self.active = Some(ws_idx.min(self.workspaces.len() - 1));
+            } else if active > ws_idx {
+                self.active = Some(active - 1);
+            }
+        }
+        if self.selected == ws_idx {
+            self.selected = ws_idx.min(self.workspaces.len() - 1);
+        } else if self.selected > ws_idx {
+            self.selected -= 1;
+        }
+    }
+
     pub fn close_selected_workspace(&mut self) {
         let close_indices = self.workspace_close_indices(self.selected);
         self.close_workspaces(close_indices);

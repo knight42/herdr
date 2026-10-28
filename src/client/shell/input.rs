@@ -573,6 +573,10 @@ impl ClientShellState {
                         ..
                     }
                 ))
+                | Some(ClientShellOverlay::MovePicker(ClientMovePickerOverlay {
+                    moving: false,
+                    ..
+                }))
                 | Some(ClientShellOverlay::Navigator(ClientNavigatorOverlay {
                     search_focused: true,
                     ..
