@@ -693,6 +693,7 @@ impl App {
         api_rx: tokio::sync::mpsc::UnboundedReceiver<crate::api::ApiRequestMessage>,
         event_hub: crate::api::EventHub,
         snapshot: &crate::persist::SessionSnapshot,
+        public_pane_id_aliases: &std::collections::HashMap<String, u32>,
         imports: &mut std::collections::HashMap<
             u32,
             crate::handoff_runtime::ImportedHandoffRuntime,
@@ -723,8 +724,29 @@ impl App {
             app.render_dirty.clone(),
         )?;
         let pane_id_aliases = crate::persist::handoff_pane_aliases(snapshot, &workspaces);
+        let public_pane_id_aliases: std::collections::HashMap<_, _> = public_pane_id_aliases
+            .iter()
+            .filter_map(|(public_id, &raw)| {
+                let pane_id = pane_id_aliases
+                    .get(&raw)
+                    .copied()
+                    .unwrap_or_else(|| crate::layout::PaneId::from_raw(raw));
+                workspaces
+                    .iter()
+                    .any(|ws| ws.pane_state(pane_id).is_some())
+                    .then(|| (public_id.clone(), pane_id))
+            })
+            .collect();
+        // An alias can name a workspace that has since closed; a new workspace
+        // reusing that id would have its panes shadowed by the alias.
+        crate::workspace::reserve_workspace_ids(
+            public_pane_id_aliases
+                .keys()
+                .filter_map(|public_id| public_id.rsplit_once(":p").map(|(ws, _)| ws)),
+        );
 
         app.state.pane_id_aliases = pane_id_aliases;
+        app.state.public_pane_id_aliases = public_pane_id_aliases;
         app.state.workspaces = workspaces;
         app.state.terminals = terminals;
         app.terminal_runtimes = runtimes.into();

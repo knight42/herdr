@@ -1454,6 +1454,129 @@ fn live_handoff_accepts_canonical_pane_id_from_child_env() {
     cleanup_test_base(&base);
 }
 
+// A shell keeps the HERDR_PANE_ID it was spawned with, so after a cross-workspace
+// move its agents report the pane's previous id. Handoff keeps that shell alive,
+// so the previous id must keep resolving, and a workspace created afterwards must
+// not reuse the closed source workspace's id and shadow it.
+#[test]
+fn live_handoff_resolves_pane_id_from_before_cross_workspace_move() {
+    let _lock = test_lock();
+    let base = unique_test_dir();
+    let config_home = base.join("config");
+    let runtime_dir = base.join("runtime");
+    let api_socket = runtime_dir.join("herdr.sock");
+    let pane_id_marker = base.join("pane-id");
+
+    let spawned = spawn_server(&config_home, &runtime_dir, &api_socket);
+    wait_for_socket(&api_socket, Duration::from_secs(10));
+    register_runtime_dir(&runtime_dir);
+
+    let create_workspace = |id: &str| {
+        request(
+            &api_socket,
+            serde_json::json!({
+                "id": id,
+                "method": "workspace.create",
+                "params": {"cwd": "/tmp", "focus": true}
+            }),
+        )
+    };
+    let target = create_workspace("test:workspace:create-target");
+    let target_workspace_id = target["result"]["workspace"]["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let source = create_workspace("test:workspace:create-source");
+    let source_workspace_id = source["result"]["workspace"]["workspace_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    let pane_id = source["result"]["root_pane"]["pane_id"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:pane:print-id",
+            "method": "pane.send_input",
+            "params": {"pane_id": pane_id, "text": format!("printf '%s' \"$HERDR_PANE_ID\" > {}", pane_id_marker.display()), "keys": ["Enter"]}
+        }),
+    ));
+    let env_pane_id = wait_for_file_contains(&pane_id_marker, &pane_id, Duration::from_secs(5));
+    assert_eq!(env_pane_id, pane_id);
+
+    // Moving the source workspace's only pane away closes that workspace.
+    let moved = request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:pane:move",
+            "method": "pane.move",
+            "params": {
+                "pane_id": pane_id,
+                "destination": {"type": "new_tab", "workspace_id": target_workspace_id},
+                "focus": false
+            }
+        }),
+    );
+    let moved_pane_id = moved["result"]["move_result"]["pane"]["pane_id"]
+        .as_str()
+        .unwrap_or_else(|| panic!("unexpected move response: {moved}"))
+        .to_string();
+    assert_ne!(moved_pane_id, env_pane_id);
+
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({"id":"test:handoff","method":"server.live_handoff","params":{}}),
+    ));
+    drop(spawned);
+    wait_for_api(&api_socket, Duration::from_secs(10));
+
+    let recreated = create_workspace("test:workspace:create-after-handoff");
+    let recreated_workspace_id = recreated["result"]["workspace"]["workspace_id"]
+        .as_str()
+        .unwrap();
+    assert_ne!(
+        recreated_workspace_id, source_workspace_id,
+        "a workspace created after handoff reused the id an alias still points into"
+    );
+
+    assert_ok(request(
+        &api_socket,
+        serde_json::json!({
+            "id": "test:stale-pane-report",
+            "method": "pane.report_agent",
+            "params": {
+                "pane_id": env_pane_id,
+                "source": "handoff-test",
+                "agent": "pi",
+                "state": "working"
+            }
+        }),
+    ));
+    let agents = request(
+        &api_socket,
+        serde_json::json!({"id":"test:agent-list","method":"agent.list","params":{}}),
+    );
+    let reported_pane = agents["result"]["agents"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|agent| agent["agent"].as_str() == Some("pi"))
+        .and_then(|agent| agent["pane_id"].as_str());
+    assert_eq!(
+        reported_pane,
+        Some(moved_pane_id.as_str()),
+        "pre-move pane id did not reach the moved pane: {agents}"
+    );
+
+    let _ = request(
+        &api_socket,
+        serde_json::json!({"id":"test:stop","method":"server.stop","params":{}}),
+    );
+    cleanup_test_base(&base);
+}
+
 #[test]
 fn live_handoff_keeps_unmanaged_agent_name_bound_to_saved_session() {
     use std::os::unix::fs::PermissionsExt;
