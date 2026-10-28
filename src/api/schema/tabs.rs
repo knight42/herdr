@@ -61,6 +61,27 @@ pub struct TabMoveParams {
     pub insert_index: usize,
 }
 
+/// Moves a whole tab, with its layout and live panes, into another workspace.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+pub struct TabTransferParams {
+    pub tab_id: String,
+    pub destination: TabTransferDestination,
+    #[serde(default)]
+    pub focus: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
+#[serde(tag = "type", rename_all = "snake_case")]
+pub enum TabTransferDestination {
+    Workspace {
+        workspace_id: String,
+    },
+    NewWorkspace {
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        label: Option<String>,
+    },
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize, schemars::JsonSchema)]
 pub struct TabInfo {
     pub tab_id: String,
