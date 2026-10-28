@@ -51,6 +51,12 @@ pub(crate) struct HandoffManifest {
     /// committed. Absent from manifests written before this field existed.
     #[serde(default)]
     pub host_shutdown_intent: Option<crate::platform::HostShutdownIntent>,
+    /// Pre-move public pane ids, keyed to the snapshot's raw pane id. Shells
+    /// carried across keep the HERDR_PANE_ID they were spawned with, so these
+    /// must keep resolving. Absent from manifests written before this field
+    /// existed.
+    #[serde(default)]
+    pub public_pane_id_aliases: std::collections::HashMap<String, u32>,
 }
 
 #[cfg(unix)]
@@ -323,6 +329,7 @@ pub(crate) fn manifest_for(
         panes,
         api_window_title,
         host_shutdown_intent,
+        public_pane_id_aliases: std::collections::HashMap::new(),
     }
 }
 
