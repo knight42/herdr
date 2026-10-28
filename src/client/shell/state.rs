@@ -125,6 +125,7 @@ pub(super) struct ShellHitMap {
     pub(super) navigator_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(super) worktree_search: Rect,
     pub(super) worktree_rows: Vec<(Rect, usize)>,
+    pub(super) move_rows: Vec<(Rect, usize)>,
     pub(super) help_popup: Rect,
     pub(super) help_scrollbar: Rect,
     pub(super) help_scroll_metrics: Option<crate::pane::ScrollMetrics>,
@@ -288,6 +289,7 @@ pub(super) enum ClientShellOverlayKind {
     WorktreeCreate,
     WorktreeOpen,
     WorktreeRemove,
+    MovePicker,
     ContextMenu,
     GlobalMenu,
     Settings,
@@ -499,6 +501,66 @@ impl ClientWorktreeOpenOverlay {
     }
 }
 
+/// A complete move request, so a row can never pair a pane with a tab-only destination.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(super) enum ClientMoveTarget {
+    PaneToTab {
+        pane_id: String,
+        tab_id: String,
+    },
+    PaneToNewTab {
+        pane_id: String,
+        workspace_id: String,
+    },
+    PaneToNewWorkspace {
+        pane_id: String,
+    },
+    TabToWorkspace {
+        tab_id: String,
+        workspace_id: String,
+    },
+    TabToNewWorkspace {
+        tab_id: String,
+    },
+}
+
+impl ClientMoveTarget {
+    pub(super) fn creates(&self) -> bool {
+        matches!(
+            self,
+            Self::PaneToNewTab { .. }
+                | Self::PaneToNewWorkspace { .. }
+                | Self::TabToNewWorkspace { .. }
+        )
+    }
+}
+
+#[derive(Debug)]
+pub(super) struct ClientMovePickerOverlay {
+    pub(super) title: &'static str,
+    pub(super) moves_pane: bool,
+    /// Existing destinations first, then the create rows, which the query names.
+    pub(super) entries: Vec<(ClientMoveTarget, String)>,
+    /// Position within `visible_indices`, not within `entries`.
+    pub(super) selected: usize,
+    pub(super) query: TextEditor,
+    pub(super) error: Option<String>,
+    pub(super) moving: bool,
+}
+
+impl ClientMovePickerOverlay {
+    pub(super) fn visible_indices(&self) -> Vec<usize> {
+        let query = self.query.trim().to_lowercase();
+        self.entries
+            .iter()
+            .enumerate()
+            .filter_map(|(index, (target, label))| {
+                (target.creates() || label.to_lowercase().contains(&query)).then_some(index)
+            })
+            .collect()
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct ClientWorktreeRemoveOverlay {
     pub(super) workspace_id: String,
@@ -591,6 +653,7 @@ pub(super) enum ClientShellOverlay {
     WorktreeCreate(ClientWorktreeCreateOverlay),
     WorktreeOpen(ClientWorktreeOpenOverlay),
     WorktreeRemove(ClientWorktreeRemoveOverlay),
+    MovePicker(ClientMovePickerOverlay),
     ContextMenu(ClientContextMenuOverlay),
     GlobalMenu(ClientGlobalMenuOverlay),
     Settings(ClientSettingsOverlay),
@@ -609,6 +672,7 @@ impl ClientShellOverlay {
             Self::WorktreeCreate(_) => ClientShellOverlayKind::WorktreeCreate,
             Self::WorktreeOpen(_) => ClientShellOverlayKind::WorktreeOpen,
             Self::WorktreeRemove(_) => ClientShellOverlayKind::WorktreeRemove,
+            Self::MovePicker(_) => ClientShellOverlayKind::MovePicker,
             Self::ContextMenu(_) => ClientShellOverlayKind::ContextMenu,
             Self::GlobalMenu(_) => ClientShellOverlayKind::GlobalMenu,
             Self::Settings(_) => ClientShellOverlayKind::Settings,
@@ -642,6 +706,7 @@ pub(super) enum PendingEndpointKind {
     WorktreeRemove {
         forced: bool,
     },
+    MovePicker,
     SelectionCopy,
     PaneScroll {
         pane_id: String,

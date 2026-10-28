@@ -148,6 +148,16 @@ impl ClientShellState {
                     outcome.repaint = true;
                     return;
                 }
+                if action == crate::input::KeybindAction::MovePaneToTab {
+                    self.open_move_pane_picker();
+                    outcome.repaint = true;
+                    return;
+                }
+                if action == crate::input::KeybindAction::MoveTabToWorkspace {
+                    self.open_move_tab_picker();
+                    outcome.repaint = true;
+                    return;
+                }
                 if action == crate::input::KeybindAction::WorkspacePicker {
                     self.pending_workspace_highlight = None;
                     self.mobile_switcher_scroll = 0;
@@ -924,6 +934,9 @@ impl ClientShellState {
             kind @ (PendingEndpointKind::IntegrationList
             | PendingEndpointKind::IntegrationInstall) => {
                 return self.handle_settings_endpoint_result(kind, result);
+            }
+            PendingEndpointKind::MovePicker => {
+                return (self.handle_move_picker_endpoint_result(result), Vec::new());
             }
             kind => {
                 let mut outcome = ClientShellInput::default();

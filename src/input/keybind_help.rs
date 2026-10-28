@@ -156,6 +156,10 @@ pub(crate) fn keybind_help_groups(
                 entry(binding_label(&keybinds.next_tab), "next tab"),
                 entry(binding_label(&keybinds.move_tab_previous), "move tab left"),
                 entry(binding_label(&keybinds.move_tab_next), "move tab right"),
+                entry(
+                    binding_label(&keybinds.move_tab_to_workspace),
+                    "move tab to workspace",
+                ),
                 entry(indexed_label(&keybinds.switch_tab), "switch tab 1-9"),
                 entry(binding_label(&keybinds.close_tab), "close tab"),
             ],
@@ -170,6 +174,10 @@ pub(crate) fn keybind_help_groups(
                 ),
                 entry(binding_label(&keybinds.close_pane), "close pane"),
                 entry(binding_label(&keybinds.rename_pane), "rename pane"),
+                entry(
+                    binding_label(&keybinds.move_pane_to_tab),
+                    "move pane to tab",
+                ),
                 entry(binding_label(&keybinds.edit_scrollback), "edit scrollback"),
                 entry(binding_label(&keybinds.clear_pane), "clear pane"),
                 entry(binding_label(&keybinds.copy_mode), "copy mode"),

@@ -1,5 +1,6 @@
 use super::*;
 
+mod move_picker_overlay;
 mod settings_overlay;
 mod worktree_overlays;
 
@@ -17,6 +18,7 @@ pub(crate) struct OverlayRender {
     pub(crate) navigator_scroll_metrics: Option<crate::pane::ScrollMetrics>,
     pub(crate) worktree_search: Rect,
     pub(crate) worktree_rows: Vec<(Rect, usize)>,
+    pub(crate) move_rows: Vec<(Rect, usize)>,
     pub(crate) help_popup: Rect,
     pub(crate) help_scrollbar: Rect,
     pub(crate) help_scroll_metrics: Option<crate::pane::ScrollMetrics>,
@@ -78,6 +80,9 @@ pub(crate) fn render_client_overlay(
         }
         ClientShellOverlay::WorktreeRemove(v) => {
             worktree_overlays::render_worktree_remove_overlay(b, v, p)
+        }
+        ClientShellOverlay::MovePicker(v) => {
+            move_picker_overlay::render_move_picker_overlay(b, v, p)
         }
         ClientShellOverlay::ContextMenu(_) | ClientShellOverlay::GlobalMenu(_) => None,
     }

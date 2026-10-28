@@ -1519,6 +1519,35 @@ impl ClientShellState {
             }
             return;
         }
+        if let Some(ClientShellOverlay::MovePicker(picker)) = self.overlay.as_mut() {
+            match mouse.kind {
+                MouseEventKind::ScrollUp => self.move_move_picker_selection(-1, outcome),
+                MouseEventKind::ScrollDown => self.move_move_picker_selection(1, outcome),
+                MouseEventKind::Down(MouseButton::Left) => {
+                    if super::contains(self.hits.overlay_cancel, point) {
+                        if !picker.moving {
+                            self.overlay = None;
+                            outcome.repaint = true;
+                        }
+                    } else if let Some((_, position)) = self
+                        .hits
+                        .move_rows
+                        .iter()
+                        .find(|(rect, _)| super::contains(*rect, point))
+                        .copied()
+                    {
+                        if !picker.moving {
+                            picker.selected = position;
+                        }
+                        self.submit_move_picker(crate::api::schema::SplitDirection::Right, outcome);
+                    } else if super::contains(self.hits.overlay_primary, point) {
+                        self.submit_move_picker(crate::api::schema::SplitDirection::Right, outcome);
+                    }
+                }
+                _ => {}
+            }
+            return;
+        }
         if matches!(self.overlay, Some(ClientShellOverlay::Settings(_))) {
             if mouse.kind == MouseEventKind::Down(MouseButton::Left) {
                 if let Some((_, section)) = self
